@@ -77,6 +77,15 @@
     "detail": "An injected HTML/script payload was reflected in the response without encoding, allowing cross-site scripting."
   },
   {
+    "id": "ssrf",
+    "name": "Server-Side Request Forgery (file / internal)",
+    "severity": "high",
+    "type": "grep",
+    "payloads": ["file:///etc/passwd", "http://169.254.169.254/latest/meta-data/", "http://127.0.0.1:80/", "http://localhost/", "http://[::1]/"],
+    "grep": ["root:.*:0:0:", "ami-id", "instance-id", "iam/security-credentials", "\\[boot loader\\]"],
+    "detail": "The parameter caused the server to fetch a local file or internal/metadata resource, indicating server-side request forgery."
+  },
+  {
     "id": "open-redirect",
     "name": "Open Redirect",
     "severity": "medium",

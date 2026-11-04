@@ -195,6 +195,7 @@
   <input class="filter" id="filter" placeholder="Filter by host…">
   <button class="btn ghost" id="scopeBtn">Scope</button>
   <button class="btn ghost" id="sessionBtn">Session</button>
+  <button class="btn ghost" id="aiBtn">AI</button>
   <button class="btn ghost" id="setupBtn">Setup</button>
   <button class="btn ghost" id="certBtn">Download CA</button>
   <button class="btn ghost" id="clearBtn">Clear</button>
@@ -437,6 +438,22 @@ Host: httpbin.org
   </div>
 </section>
 
+<div class="setup" id="aiModal">
+  <div class="card" style="max-width:480px">
+    <button class="btn ghost close" id="aiClose">✕</button>
+    <h2>AI-assisted triage</h2>
+    <p style="color:var(--muted);margin:2px 0 12px;font-size:12px">Uses the Anthropic API to analyze findings (true/false-positive, impact, remediation, exploit). Your API key is stored locally in the data directory and sent only to api.anthropic.com. Or set <code class="kbd">ANTHROPIC_API_KEY</code>.</p>
+    <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">API key</div>
+      <input class="tin" id="aiKey" type="password" placeholder="sk-ant-… (leave blank to keep current)" style="width:100%"></div>
+    <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">Model</div>
+      <input class="tin" id="aiModel" placeholder="claude-opus-5-5" style="width:100%"></div>
+    <div id="aiStatus" style="color:var(--muted);font:12px var(--mono);margin:8px 0"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" id="aiCancel">Cancel</button><button class="btn primary" id="aiSave">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="setup" id="scheduleModal">
   <div class="card" style="max-width:460px">
     <button class="btn ghost close" id="scheduleClose">✕</button>
@@ -468,6 +485,11 @@ Host: httpbin.org
       <button class="btn primary" id="macroReplay">Run login macro</button>
       <span id="macroStatus" style="color:var(--muted);font:12px var(--mono)"></span>
     </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Low-privilege identity <span style="color:var(--muted);font-weight:400;font-size:12px">(for Authz testing)</span></h2>
+    <p style="color:var(--muted);margin:2px 0 10px;font-size:12px">Headers (e.g. a low-role Cookie) used by the <b>⚖ Authz</b> button to replay requests as a different user.</p>
+    <table style="width:100%;font:12px var(--mono)"><tbody id="authzRows"></tbody></table>
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="btn" id="authzAdd">+ Add header</button><button class="btn primary" id="authzSave">Save low-priv identity</button></div>
   </div>
 </div>
 
@@ -629,7 +651,7 @@ async function select(id, tr){
   window._lastFlow=f;
   $('#detail').innerHTML=`
     <div class="pane"><h3>Request <span class="badge">${esc(f.method)} ${esc(f.scheme)}://${esc(f.host)}</span>
-      <span class="right"><button class="btn" id="toCurl" title="Copy as curl">curl</button><button class="btn" id="toMacro" title="Add to login macro">+ Macro</button><button class="btn" id="toParams" title="Discover hidden parameters">Params</button><button class="btn" id="toDiscover" title="Content discovery on this host">Discover</button><button class="btn" id="toCrawl">🕸 Crawl</button><button class="btn" id="toScan">⚡ Scan</button><button class="btn" id="toFuzz">⇥ Fuzzer</button><button class="btn primary" id="toRep">⇥ Repeater</button></span></h3>
+      <span class="right"><button class="btn" id="toCurl" title="Copy as curl">curl</button><button class="btn" id="toAuthz" title="Authorization test (replay with low-priv/no identity)">⚖ Authz</button><button class="btn" id="toMacro" title="Add to login macro">+ Macro</button><button class="btn" id="toParams" title="Discover hidden parameters">Params</button><button class="btn" id="toDiscover" title="Content discovery on this host">Discover</button><button class="btn" id="toCrawl">🕸 Crawl</button><button class="btn" id="toScan">⚡ Scan</button><button class="btn" id="toFuzz">⇥ Fuzzer</button><button class="btn primary" id="toRep">⇥ Repeater</button></span></h3>
       <pre>${requestView(f)}</pre></div>
     <div class="pane"><h3>Response <span class="badge ${statusClass(f.statusCode)}">${f.error?'error':esc(f.statusCode)}</span></h3>
       <pre>${responseView(f)}</pre></div>`;
@@ -643,6 +665,7 @@ async function select(id, tr){
   $('#toCrawl').addEventListener('click', ()=>crawlSite(f));
   $('#toCurl').addEventListener('click', ()=>copyAsCurl(f));
   $('#toMacro').addEventListener('click', ()=>addToMacro(f));
+  $('#toAuthz').addEventListener('click', ()=>authzTest(f));
   $('#toDiscover').addEventListener('click', ()=>runStream('/discover',{flowId:f.id},'#toDiscover','Discover',r=>r.found!==undefined?`${r.found} path(s) found — see Proxy/Target`:null,'Discovering…'));
   $('#toParams').addEventListener('click', ()=>runParamMine(f));
 }
@@ -784,11 +807,16 @@ function showFinding(id, node){
     <div class="body">
       <p>${esc(f.detail)}</p>
       ${f.evidence?`<div class="evid">${esc(f.evidence)}</div>`:''}
-      ${f.flowId?`<div class="vflow"><button class="btn" id="viewFlow">View request #${f.flowId}</button></div>`:''}
+      <div class="vflow" style="display:flex;gap:8px">
+        ${f.flowId?`<button class="btn" id="viewFlow">View request #${f.flowId}</button>`:''}
+        <button class="btn primary" id="aiTriageBtn">🤖 Analyze with AI</button>
+      </div>
+      <div id="aiTriageBox" style="margin-top:12px"></div>
     </div>`;
   const vf=$('#viewFlow');
   if(vf) vf.addEventListener('click', ()=>{ $('#nav-proxy').click();
     fetch('/flow?id='+f.flowId).then(r=>r.ok?select(f.flowId,null):null); });
+  $('#aiTriageBtn').addEventListener('click', ()=>aiTriage(f));
 }
 async function loadFindings(){
   try{ findings=await (await fetch('/findings')).json()||[]; }catch(e){ findings=[]; }
@@ -881,6 +909,21 @@ async function runParamMine(f){
   toast(found.length? ('Hidden params: '+found.join(', ')) : 'No hidden parameters found', found.length?'bad':'ok');
 }
 
+// Authorization test: replay as original / no identity / low-priv and compare.
+async function authzTest(f){
+  const btn=$('#toAuthz'); btn.disabled=true; btn.textContent='Testing…';
+  try{
+    const r=await (await fetch('/authz/test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flowId:f.id})})).json();
+    const parts=[];
+    if(r.unauth) parts.push('no-auth: '+r.unauth.verdict+' ('+r.unauth.status+')');
+    if(r.lowpriv) parts.push('low-priv: '+r.lowpriv.verdict+' ('+r.lowpriv.status+')');
+    const bad=r.finding;
+    toast('Authz — '+parts.join(' · ')+(bad?' ⚠ BROKEN ACCESS CONTROL':''), bad?'bad':'ok');
+    if(bad) loadFindings();
+  }catch(e){ toast('Authz error','warn'); }
+  btn.disabled=false; btn.textContent='⚖ Authz';
+}
+
 // Copy a flow as a curl command.
 function copyAsCurl(f){
   let cmd=`curl -x http://127.0.0.1:8080 '${f.scheme}://${f.host}${f.path}'`;
@@ -905,6 +948,44 @@ $('#macroReplay').addEventListener('click', async ()=>{
     toast('Login macro replayed — session updated','ok');
   }catch(e){ $('#macroStatus').textContent='error'; }
 });
+
+// AI settings modal.
+async function openAI(){
+  try{ const s=await (await fetch('/ai')).json();
+    $('#aiModel').value=s.model||''; $('#aiStatus').textContent=s.configured?('✓ API key configured ('+s.model+')'):'No API key set.';
+    $('#aiStatus').style.color=s.configured?'var(--green)':'var(--muted)';
+  }catch(e){}
+  $('#aiModal').classList.add('show');
+}
+$('#aiBtn').addEventListener('click', openAI);
+$('#aiClose').addEventListener('click', ()=>$('#aiModal').classList.remove('show'));
+$('#aiCancel').addEventListener('click', ()=>$('#aiModal').classList.remove('show'));
+$('#aiSave').addEventListener('click', async ()=>{
+  await fetch('/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:$('#aiKey').value,model:$('#aiModel').value.trim()})});
+  $('#aiKey').value=''; toast('AI settings saved','ok'); openAI();
+});
+// Minimal markdown → HTML (headings, bold, inline code, bullet lists).
+function mdToHtml(md){
+  const lines=esc(md).split('\n'); let html=''; let inList=false;
+  const inline=s=>s.replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/`([^`]+)`/g,'<code style="background:var(--bg3);padding:1px 4px;border-radius:3px">$1</code>');
+  for(let l of lines){
+    if(/^#{1,6}\s/.test(l)){ if(inList){html+='</ul>';inList=false;} html+='<div style="font-weight:700;margin:8px 0 4px;color:var(--fg)">'+inline(l.replace(/^#+\s/,''))+'</div>'; }
+    else if(/^\s*[-*]\s/.test(l)){ if(!inList){html+='<ul style="margin:4px 0;padding-left:20px">';inList=true;} html+='<li>'+inline(l.replace(/^\s*[-*]\s/,''))+'</li>'; }
+    else if(/^\s*\d+\.\s/.test(l)){ if(!inList){html+='<ul style="margin:4px 0;padding-left:20px">';inList=true;} html+='<li>'+inline(l.replace(/^\s*\d+\.\s/,''))+'</li>'; }
+    else { if(inList){html+='</ul>';inList=false;} if(l.trim()) html+='<div style="margin:3px 0">'+inline(l)+'</div>'; }
+  }
+  if(inList) html+='</ul>';
+  return html;
+}
+async function aiTriage(f){
+  const box=$('#aiTriageBox'); if(box){ box.innerHTML='<span style="color:var(--muted)">Analyzing with AI…</span>'; }
+  try{
+    const r=await (await fetch('/ai/triage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})).json();
+    if(r.error){ if(/API key/.test(r.error)){ box.innerHTML='<span style="color:var(--amber)">Set an API key under the AI button first.</span>'; openAI(); }
+      else box.innerHTML='<span style="color:var(--red)">'+esc(r.error)+'</span>'; return; }
+    box.innerHTML='<div style="border:1px solid var(--accent);border-radius:8px;padding:12px;background:var(--bg2)">'+mdToHtml(r.analysis)+'</div>';
+  }catch(e){ if(box) box.innerHTML='<span style="color:var(--red)">request failed</span>'; }
+}
 
 // Scheduling modal.
 async function openSchedule(){
@@ -973,10 +1054,24 @@ function sessRowHTML(h){ h=h||{name:'',value:''};
     <td style="width:30px"><button class="btn sess-del">✕</button></td></tr>`; }
 function sessAddRow(h){ const t=document.createElement('tbody'); t.innerHTML=sessRowHTML(h); const tr=t.firstElementChild;
   tr.querySelector('.sess-del').addEventListener('click',()=>tr.remove()); $('#sessRows').appendChild(tr); }
+function authzRowHTML(h){ h=h||{name:'',value:''};
+  return `<tr><td style="padding:3px 0"><input class="tin az-n" value="${esc(h.name)}" placeholder="Header name" style="width:98%"></td>
+    <td style="padding:3px 0"><input class="tin az-v" value="${esc(h.value)}" placeholder="value" style="width:98%"></td>
+    <td style="width:30px"><button class="btn az-del">✕</button></td></tr>`; }
+function authzAddRow(h){ const t=document.createElement('tbody'); t.innerHTML=authzRowHTML(h); const tr=t.firstElementChild;
+  tr.querySelector('.az-del').addEventListener('click',()=>tr.remove()); $('#authzRows').appendChild(tr); }
 async function openSession(){
   try{ const hs=await (await fetch('/session')).json()||[]; $('#sessRows').innerHTML=''; hs.forEach(sessAddRow); if(!hs.length) sessAddRow(); }catch(e){}
+  try{ const az=await (await fetch('/authz')).json()||[]; $('#authzRows').innerHTML=''; az.forEach(authzAddRow); if(!az.length) authzAddRow(); }catch(e){}
   $('#sessionModal').classList.add('show');
 }
+document.addEventListener('click', e=>{
+  if(e.target.id==='authzAdd') authzAddRow();
+  if(e.target.id==='authzSave'){
+    const hs=Array.from($('#authzRows').children).map(tr=>({name:tr.querySelector('.az-n').value.trim(),value:tr.querySelector('.az-v').value})).filter(h=>h.name);
+    fetch('/authz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(hs)}).then(()=>toast('Low-privilege identity saved','ok'));
+  }
+});
 $('#sessionBtn').addEventListener('click', openSession);
 $('#sessionClose').addEventListener('click', ()=>$('#sessionModal').classList.remove('show'));
 $('#sessCancel').addEventListener('click', ()=>$('#sessionModal').classList.remove('show'));

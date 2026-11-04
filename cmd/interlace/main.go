@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"interlace/internal/ai"
 	"interlace/internal/ca"
 	"interlace/internal/crawler"
 	"interlace/internal/fuzzer"
@@ -150,6 +151,9 @@ func main() {
 	sess := session.Load(filepath.Join(*dataDir, "session.json"))
 	rep.SetSession(sess)
 	macroStore := macro.Load(filepath.Join(*dataDir, "macro.json"))
+	authzSess := session.Load(filepath.Join(*dataDir, "authz-session.json")) // low-privilege identity
+	authzSender := repeater.New(*insecure)                                    // no session applied
+	aiStore := ai.Load(filepath.Join(*dataDir, "ai.json"))                    // optional AI triage
 
 	// Plugin SDK: load any custom active-check rules the user has added.
 	if n, err := scanner.LoadRules(filepath.Join(*dataDir, "rules")); err != nil {
@@ -177,7 +181,7 @@ func main() {
 		log.Printf("scheduled scan done: %d endpoints, %d findings", n, f)
 	})
 
-	go serveAPI(*apiAddr, *proxyAddr, authority, st, h, findHub, rep, sc, oobSrv, oobHub, ic, interHub, processFlow, *insecure, mr, wsHub, sess, sched, macroStore, wsIc, wsInterHub)
+	go serveAPI(*apiAddr, *proxyAddr, authority, st, h, findHub, rep, sc, oobSrv, oobHub, ic, interHub, processFlow, *insecure, mr, wsHub, sess, sched, macroStore, wsIc, wsInterHub, authzSess, authzSender, aiStore)
 
 	log.Printf("Interlace %s", version)
 	log.Printf("Interlace UI:    http://%s", *apiAddr)
@@ -243,8 +247,166 @@ func summarize(f *model.Flow) summary {
 	}
 }
 
-func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, findHub *hub.Hub, rep *repeater.Sender, sc *scope.Scope, oobSrv *oob.Server, oobHub *hub.Hub, ic *intercept.Interceptor, interHub *hub.Hub, processFlow func(*model.Flow), insecure bool, mr *matchreplace.Engine, wsHub *hub.Hub, sess *session.Session, sched *scheduler.Scheduler, macroStore *macro.Store, wsIc *wsintercept.Interceptor, wsInterHub *hub.Hub) {
+func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, findHub *hub.Hub, rep *repeater.Sender, sc *scope.Scope, oobSrv *oob.Server, oobHub *hub.Hub, ic *intercept.Interceptor, interHub *hub.Hub, processFlow func(*model.Flow), insecure bool, mr *matchreplace.Engine, wsHub *hub.Hub, sess *session.Session, sched *scheduler.Scheduler, macroStore *macro.Store, wsIc *wsintercept.Interceptor, wsInterHub *hub.Hub, authzSess *session.Session, authzSender *repeater.Sender, aiStore *ai.Store) {
 	mux := http.NewServeMux()
+
+	// AI settings: configured status + model; POST sets the API key/model.
+	mux.HandleFunc("/ai", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var in struct {
+				APIKey string `json:"apiKey"`
+				Model  string `json:"model"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if err := aiStore.SetConfig(in.APIKey, in.Model); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"configured": aiStore.Configured(), "model": aiStore.Model()})
+	})
+
+	// AI-assisted triage of a finding.
+	mux.HandleFunc("/ai/triage", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Title    string `json:"title"`
+			Severity string `json:"severity"`
+			Check    string `json:"check"`
+			Detail   string `json:"detail"`
+			Evidence string `json:"evidence"`
+			Host     string `json:"host"`
+			URL      string `json:"url"`
+			FlowID   int64  `json:"flowId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		var reqText, respText string
+		if in.FlowID != 0 {
+			if f, _ := st.Get(in.FlowID); f != nil {
+				decompressFlow(f)
+				reqText = flowToRaw(f)
+				respText = string(f.RespBody)
+				if len(respText) > 2000 {
+					respText = respText[:2000] + "\n…(truncated)"
+				}
+			}
+		}
+		prompt := fmt.Sprintf(`A scanner reported this finding. Assess it.
+
+Finding: %s (severity: %s)
+Check: %s
+Host: %s
+URL: %s
+Detail: %s
+Evidence: %s
+
+--- Request ---
+%s
+
+--- Response (truncated) ---
+%s
+
+Provide, in concise markdown (under 250 words):
+1. Whether this is likely a TRUE or FALSE positive, and why.
+2. Real-world impact if genuine.
+3. A concrete remediation.
+4. A brief exploitation example if applicable.`,
+			in.Title, in.Severity, in.Check, in.Host, in.URL, in.Detail, in.Evidence, reqText, respText)
+
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		analysis, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]string{"analysis": analysis})
+	})
+
+	// Authorization testing (Autorize-style): configure a low-privilege identity.
+	mux.HandleFunc("/authz", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var hs []session.Header
+			if err := json.NewDecoder(r.Body).Decode(&hs); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if err := authzSess.Set(hs); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSON(w, authzSess.Get())
+	})
+
+	// Replay a captured request as the original identity, with no identity, and
+	// as the low-privilege identity; compare to detect broken access control.
+	mux.HandleFunc("/authz/test", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			FlowID int64 `json:"flowId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		f, _ := st.Get(in.FlowID)
+		if f == nil {
+			http.Error(w, "flow not found", http.StatusNotFound)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		authority := authorityOf(f)
+		rawOrig := flowToRaw(f)
+		rawNoAuth := stripAuthHeaders(rawOrig)
+		rawLow := applySessionHeaders(rawNoAuth, authzSess.Get())
+
+		send := func(raw string) repeater.Response {
+			return authzSender.Send(ctx, repeater.Request{Scheme: f.Scheme, Host: authority, Raw: raw})
+		}
+		orig := send(rawOrig)
+		unauth := send(rawNoAuth)
+		result := map[string]any{
+			"original": map[string]any{"status": orig.Status, "length": orig.BodyLen},
+			"unauth":   authzVerdict(orig, unauth),
+		}
+		if authzSess.Enabled() {
+			result["lowpriv"] = authzVerdict(orig, send(rawLow))
+		}
+
+		// Record a finding if either identity bypassed access control.
+		bypassed := ""
+		if v, _ := result["unauth"].(map[string]any); v != nil && v["verdict"] == "bypassed" {
+			bypassed = "without any authentication"
+		}
+		if v, _ := result["lowpriv"].(map[string]any); v != nil && v["verdict"] == "bypassed" {
+			bypassed = "with a low-privilege identity"
+		}
+		if bypassed != "" {
+			fnd := scanner.Finding{
+				Severity: scanner.High, Check: "broken-access-control", Source: "active",
+				Title: "Broken access control / IDOR",
+				Detail: "The resource returned an equivalent response " + bypassed +
+					", indicating authorization is not enforced.",
+				Evidence: fmt.Sprintf("original=%d bytes (HTTP %d), test response equivalent", orig.BodyLen, orig.Status),
+				Host:     scanner.HostOf(authority), URL: f.URL, FlowID: f.ID, Time: time.Now(),
+				Key: "broken-access-control|" + scanner.HostOf(authority) + "|" + strings.Split(f.Path, "?")[0],
+			}
+			if id, inserted, _ := st.InsertFinding(&fnd); inserted {
+				fnd.ID = id
+				if msg, e := json.Marshal(fnd); e == nil {
+					findHub.Broadcast(msg)
+				}
+			}
+			result["finding"] = true
+		}
+		writeJSON(w, result)
+	})
 
 	// WebSocket interception: state, toggle, resolve, live changes.
 	mux.HandleFunc("/wsintercept", func(w http.ResponseWriter, r *http.Request) {
@@ -1063,8 +1225,14 @@ func remediationFor(check string) string {
 		return "Avoid shelling out with user input; use safe APIs and strict allowlists."
 	case "open-redirect":
 		return "Validate redirect targets against an allowlist of internal URLs."
-	case "blind-ssrf":
-		return "Validate and allowlist outbound request destinations; block internal ranges and metadata endpoints."
+	case "blind-ssrf", "ssrf":
+		return "Validate and allowlist outbound request destinations; block internal ranges, file:// and metadata endpoints."
+	case "xxe":
+		return "Disable external entity and DTD processing in the XML parser."
+	case "proto-pollution":
+		return "Avoid recursive merges of user input; reject __proto__/constructor keys and use null-prototype objects or Map."
+	case "broken-access-control":
+		return "Enforce server-side authorization on every request; verify the user owns/ may access the object (prevent IDOR)."
 	default:
 		return "Review and remediate according to secure-coding guidance."
 	}
@@ -1181,6 +1349,66 @@ func authorityOf(f *model.Flow) string {
 		return u.Host
 	}
 	return f.Host
+}
+
+// stripAuthHeaders removes identity headers (Cookie, Authorization) from a raw request.
+func stripAuthHeaders(raw string) string {
+	lines := strings.Split(raw, "\r\n")
+	var out []string
+	for _, ln := range lines {
+		low := strings.ToLower(ln)
+		if strings.HasPrefix(low, "cookie:") || strings.HasPrefix(low, "authorization:") {
+			continue
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\r\n")
+}
+
+// applySessionHeaders inserts the given headers after the request line.
+func applySessionHeaders(raw string, headers []session.Header) string {
+	if len(headers) == 0 {
+		return raw
+	}
+	idx := strings.Index(raw, "\r\n")
+	if idx < 0 {
+		return raw
+	}
+	var ins strings.Builder
+	for _, h := range headers {
+		ins.WriteString("\r\n" + h.Name + ": " + h.Value)
+	}
+	return raw[:idx] + ins.String() + raw[idx:]
+}
+
+// authzVerdict compares a test response to the original and classifies access control.
+func authzVerdict(orig, test repeater.Response) map[string]any {
+	verdict := "unclear"
+	switch {
+	case test.Error != "":
+		verdict = "error"
+	case test.Status == 401 || test.Status == 403:
+		verdict = "enforced"
+	case test.Status >= 300 && test.Status < 400:
+		verdict = "enforced" // redirect (often to login)
+	case test.Status == orig.Status && similarLen(test.BodyLen, orig.BodyLen):
+		verdict = "bypassed" // same identity-less response == no authorization check
+	}
+	return map[string]any{"status": test.Status, "length": test.BodyLen, "verdict": verdict}
+}
+
+func similarLen(a, b int) bool {
+	if a == b {
+		return true
+	}
+	hi, lo := a, b
+	if lo > hi {
+		hi, lo = lo, hi
+	}
+	if hi == 0 {
+		return true
+	}
+	return float64(hi-lo)/float64(hi) < 0.1 // within 10%
 }
 
 // decompressFlow decodes a gzip/deflate response body in place so the UI can

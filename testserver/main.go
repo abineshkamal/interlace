@@ -98,6 +98,41 @@ func main() {
 		fmt.Fprintf(w, "PING %s: 64 bytes\n", host)
 	})
 
+	// SSRF (non-blind): fetches the url param and echoes the body back.
+	mux.HandleFunc("/proxy", func(w http.ResponseWriter, r *http.Request) {
+		u := r.URL.Query().Get("url")
+		if strings.HasPrefix(u, "file:///etc/passwd") {
+			fmt.Fprint(w, "root:x:0:0:root:/root:/bin/bash\n")
+			return
+		}
+		fmt.Fprintf(w, "fetched %s", u)
+	})
+
+	// XXE: naively expands external entities (simulated) in an XML body.
+	mux.HandleFunc("/xml", func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		body := string(buf[:n])
+		if strings.Contains(body, "file:///etc/passwd") {
+			fmt.Fprint(w, "<result>root:x:0:0:root:/root:/bin/bash</result>")
+			return
+		}
+		fmt.Fprint(w, "<result>ok</result>")
+	})
+
+	// Prototype pollution (simulated): echoes a polluted global property back.
+	mux.HandleFunc("/merge", func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		body := string(buf[:n])
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(body, "ILXPP1337") {
+			fmt.Fprint(w, `{"ok":true,"ilxPolluted":"ILXPP1337"}`) // leaked polluted prop
+			return
+		}
+		fmt.Fprint(w, `{"ok":true}`)
+	})
+
 	// Blind SSRF: fetches the url parameter server-side (no response echoed).
 	mux.HandleFunc("/fetch", func(w http.ResponseWriter, r *http.Request) {
 		if u := r.URL.Query().Get("url"); u != "" {
@@ -134,6 +169,20 @@ func main() {
 				fmt.Fprintf(w, "%s: %s\n", name, v)
 			}
 		}
+	})
+
+	// BROKEN access control: returns admin data regardless of identity.
+	mux.HandleFunc("/admin/data", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ADMIN DATA: users=[alice,bob], revenue=$1,200,000, api_key=live_xxx")
+	})
+	// ENFORCED access control: requires a valid admin cookie, else 403.
+	mux.HandleFunc("/admin/secure", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("role"); err != nil || c.Value != "admin" {
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, "403 Forbidden: admin only")
+			return
+		}
+		fmt.Fprint(w, "SECURE ADMIN DATA: secret settings")
 	})
 
 	// Cookie-based SQLi (to verify cookie insertion points).

