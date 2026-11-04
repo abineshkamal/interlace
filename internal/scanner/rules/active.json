@@ -77,6 +77,33 @@
     "detail": "An injected HTML/script payload was reflected in the response without encoding, allowing cross-site scripting."
   },
   {
+    "id": "nosqli",
+    "name": "NoSQL Injection",
+    "severity": "high",
+    "type": "grep",
+    "payloads": ["' || '1'=='1", "\"||\"1\"==\"1", "' && this.password", "[$ne]=1", "{\"$gt\":\"\"}"],
+    "grep": ["MongoError", "mongosh", "BSONError", "unexpected token", "SyntaxError: .* in JSON", "E11000", "command failed"],
+    "detail": "A NoSQL operator/payload triggered a database error or behavioral change, indicating NoSQL injection."
+  },
+  {
+    "id": "ldapi",
+    "name": "LDAP Injection",
+    "severity": "high",
+    "type": "grep",
+    "payloads": ["*)(uid=*))(|(uid=*", "*)(|(objectclass=*", "admin)(|(password=*", "*"],
+    "grep": ["javax.naming", "LDAPException", "com.sun.jndi", "Invalid DN syntax", "Bad search filter", "supplied argument is not a valid ldap"],
+    "detail": "An LDAP filter metacharacter triggered a directory-service error, indicating LDAP injection."
+  },
+  {
+    "id": "crlf",
+    "name": "CRLF / HTTP Response Header Injection",
+    "severity": "medium",
+    "type": "header-grep",
+    "payloads": ["interlace\r\nX-Interlace-CRLF: injected", "interlace%0d%0aX-Interlace-CRLF:injected"],
+    "grep": ["X-Interlace-CRLF"],
+    "detail": "An injected CRLF sequence created a new response header, indicating HTTP response splitting / header injection."
+  },
+  {
     "id": "ssrf",
     "name": "Server-Side Request Forgery (file / internal)",
     "severity": "high",

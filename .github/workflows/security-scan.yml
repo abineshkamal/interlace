@@ -1,0 +1,46 @@
+# Example: run an Interlace active scan in CI and publish results to GitHub
+# code scanning (Security tab). Trigger manually with a target URL.
+#
+# Only scan hosts you are authorized to test.
+name: Interlace Security Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target URL to scan (authorized targets only)"
+        required: true
+        default: "https://example.com"
+      fail_on:
+        description: "Fail the job if a finding at/above this severity exists (high|medium|low|none)"
+        required: false
+        default: "none"
+
+permissions:
+  contents: read
+  security-events: write   # required to upload SARIF
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - name: Build Interlace
+        run: CGO_ENABLED=0 go build -ldflags "-s -w" -o interlace ./cmd/interlace
+
+      - name: Run scan
+        run: |
+          ./interlace scan "${{ github.event.inputs.target }}" \
+            --out interlace.sarif --format sarif \
+            --fail-on "${{ github.event.inputs.fail_on }}"
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: interlace.sarif

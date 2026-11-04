@@ -83,6 +83,57 @@ var checks = []check{
 	checkJWT,
 	checkCORSReflection,
 	checkCacheable,
+	checkTechFingerprint,
+}
+
+// checkTechFingerprint reports detected technologies (info) from headers and cookies.
+func checkTechFingerprint(f *model.Flow) []Finding {
+	var tech []string
+	add := func(t string) {
+		for _, e := range tech {
+			if e == t {
+				return
+			}
+		}
+		tech = append(tech, t)
+	}
+	if v := f.RespHeaders.Get("Server"); v != "" {
+		add("Server: " + v)
+	}
+	if v := f.RespHeaders.Get("X-Powered-By"); v != "" {
+		add(v)
+	}
+	for h, label := range map[string]string{
+		"X-AspNet-Version": "ASP.NET", "X-AspNetMvc-Version": "ASP.NET MVC",
+		"X-Drupal-Cache": "Drupal", "X-Generator": "", "X-Shopify-Stage": "Shopify",
+		"X-Magento-Cache-Debug": "Magento", "X-Varnish": "Varnish", "Via": "Proxy/CDN",
+		"CF-Ray": "Cloudflare", "X-Served-By": "CDN", "X-Jenkins": "Jenkins",
+	} {
+		if v := f.RespHeaders.Get(h); v != "" {
+			if label == "" {
+				label = v
+			}
+			add(label)
+		}
+	}
+	for _, sc := range f.RespHeaders["Set-Cookie"] {
+		low := strings.ToLower(sc)
+		for sig, label := range map[string]string{
+			"phpsessid": "PHP", "jsessionid": "Java/JSP", "asp.net_sessionid": "ASP.NET",
+			"laravel_session": "Laravel", "_rails": "Ruby on Rails", "connect.sid": "Node.js/Express",
+			"django": "Django", "ci_session": "CodeIgniter",
+		} {
+			if strings.Contains(low, sig) {
+				add(label)
+			}
+		}
+	}
+	if len(tech) == 0 {
+		return nil
+	}
+	return one(Info, "tech-fingerprint", "Technology fingerprint",
+		"Detected server-side technologies, useful for targeting known vulnerabilities.",
+		strings.Join(tech, ", "), "tech-fingerprint|"+f.Host)
 }
 
 // checkCORSReflection flags responses that reflect the request Origin (or allow

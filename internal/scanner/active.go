@@ -136,7 +136,8 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 	}
 	points := req.insertionPoints()
 	xmlApplicable := strings.Contains(req.contentType, "xml") || strings.HasPrefix(strings.TrimSpace(req.rawBodyRaw), "<")
-	if len(points) == 0 && !xmlApplicable && !req.isJSON {
+	gqlApplicable := strings.Contains(strings.ToLower(req.path), "graphql") || strings.Contains(req.contentType, "graphql")
+	if len(points) == 0 && !xmlApplicable && !req.isJSON && !gqlApplicable {
 		return 0, fmt.Errorf("no insertion points (add query or form-body parameters to the request)")
 	}
 
@@ -226,6 +227,7 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 	if ctx.Err() == nil {
 		checkXXE(ctx, t, req, sender, report, &probes, &mu)
 		checkProtoPollution(ctx, t, req, sender, report, &probes, &mu)
+		checkGraphQL(ctx, t, req, sender, report, &probes, &mu)
 	}
 
 	// Resolve out-of-band checks: give callbacks a moment to arrive.
@@ -348,6 +350,15 @@ func probe(ctx context.Context, t Target, req *request, pt point, rule Rule, pay
 			if re.MatchString(resp.Body) && !re.MatchString(baseline) {
 				f := mk(rule.Severity)
 				f.Evidence = evidence + "  →  matched: " + re.String()
+				report(f)
+				return
+			}
+		}
+	case "header-grep":
+		for _, re := range rule.compiled {
+			if re.MatchString(resp.Headers) {
+				f := mk(rule.Severity)
+				f.Evidence = evidence + "  →  injected response header"
 				report(f)
 				return
 			}
@@ -591,6 +602,44 @@ func (r *request) render(pt *point, value string) string {
 		sb.WriteString(r.rawBody)
 	}
 	return sb.String()
+}
+
+// checkGraphQL detects a GraphQL endpoint and tests whether schema
+// introspection is exposed.
+func checkGraphQL(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	isGQL := strings.Contains(strings.ToLower(req.path), "graphql") ||
+		strings.Contains(req.contentType, "graphql") ||
+		(req.isJSON && strings.Contains(req.rawBodyRaw, "query"))
+	if !isGQL {
+		return
+	}
+	// Report the endpoint, then test introspection with a POST JSON query.
+	report(Finding{
+		Severity: Info, Check: "graphql-endpoint", Title: "GraphQL endpoint",
+		Detail:   "A GraphQL endpoint was identified; review its queries/mutations and authorization.",
+		Evidence: req.method + " " + req.path, Source: "active",
+		Key: "graphql-endpoint|" + t.Host + "|" + req.path,
+	})
+
+	method := "POST"
+	path := req.path
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	body := `{"query":"query{__schema{queryType{name} types{name}}}"}`
+	raw := method + " " + path + " HTTP/1.1\r\nHost: " + t.Host + "\r\nContent-Type: application/json\r\n\r\n" + body
+	resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: raw})
+	mu.Lock()
+	*probes++
+	mu.Unlock()
+	if resp.Error == "" && strings.Contains(resp.Body, "__schema") && strings.Contains(resp.Body, "queryType") {
+		report(Finding{
+			Severity: Medium, Check: "graphql-introspection", Title: "GraphQL introspection enabled",
+			Detail:   "Schema introspection is enabled, exposing the full API schema (types, queries, mutations) to any client. Disable it in production.",
+			Evidence: "introspection query returned __schema", Source: "active",
+			Key: "graphql-introspection|" + t.Host + "|" + path,
+		})
+	}
 }
 
 // renderBody rebuilds the raw request with body replaced (for XXE/PP payloads).

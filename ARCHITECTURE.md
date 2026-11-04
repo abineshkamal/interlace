@@ -59,6 +59,9 @@ client ──▶ proxy :8080
 | `session` | Auth headers attached to repeater/scanner/crawl requests |
 | `macro` | Login-sequence record + replay (captures session cookies) |
 | `scheduler` | Recurring batch scans |
+| `recon` | Content discovery + parameter mining |
+| `ai` | Optional AI triage/payloads — provider-agnostic (Anthropic or OpenAI-compatible) |
+| `notify` | Webhook notifications (Slack/Discord/generic) on findings |
 
 ## Scanner model
 
@@ -66,8 +69,11 @@ client ──▶ proxy :8080
   flows and emit deduplicated `Finding`s (dedup key per check+host).
 - **Active** checks (`scanner.RunActive`) send probe requests through
   `repeater.Sender`. Rules are JSON (`rules/active.json`, embedded + user files
-  from `<data>/rules/`). Rule types: `grep`, `reflection`, `redirect`, `oob`,
-  `time`, `boolean`. Insertion points: query, form body, cookie, JSON body.
+  from `<data>/rules/`). Rule types: `grep`, `header-grep`, `reflection`,
+  `redirect`, `oob`, `time`, `boolean`, plus special checks (XXE, prototype
+  pollution, GraphQL). Insertion points: query, form body, cookie, JSON body.
+- **Headless mode:** `interlace scan <url>` crawls + active-scans and writes a
+  SARIF/JSON report with CI exit codes (`cmd/interlace` → `runScanCLI`).
 - **Scope is enforced** before any active scan, fuzz, crawl, discovery or
   param-mine: out-of-scope hosts are refused (fail-closed).
 

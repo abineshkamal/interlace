@@ -192,7 +192,7 @@
   <button class="btn" id="interceptBtn" title="Pause requests to edit or drop them">Intercept: off</button>
   <button class="btn" id="interceptRespBtn" title="Pause responses to edit or drop them">Resp: off</button>
   <span class="count" id="proxyCtl">Flows: <b id="count">0</b></span>
-  <input class="filter" id="filter" placeholder="Filter by host…">
+  <input class="filter" id="filter" placeholder="Search host, path, body…">
   <button class="btn ghost" id="scopeBtn">Scope</button>
   <button class="btn ghost" id="sessionBtn">Session</button>
   <button class="btn ghost" id="aiBtn">AI</button>
@@ -414,7 +414,7 @@ Host: httpbin.org
 </textarea>
         </div>
         <div class="fz-pl">
-          <div class="fz-sub">Payloads <span class="right"><span id="fzPosCount" style="color:var(--accent2);text-transform:none;letter-spacing:0">1 position</span></span></div>
+          <div class="fz-sub">Payloads <span class="right"><button class="btn" id="fzAI" style="text-transform:none;letter-spacing:0" title="Generate payloads with AI">✨ AI</button><span id="fzPosCount" style="color:var(--accent2);text-transform:none;letter-spacing:0;align-self:center">1 position</span></span></div>
           <div id="fzPayloads"></div>
           <div class="fz-opts">
             <label>Grep</label><input class="tin grep" id="fzGrep" placeholder="flag responses containing…">
@@ -470,7 +470,13 @@ Host: httpbin.org
     <label style="display:flex;align-items:center;gap:8px;margin:10px 0"><input type="checkbox" id="schedEnabled"> Enable scheduled scans</label>
     <label style="display:flex;align-items:center;gap:8px;margin:10px 0">Every <input class="tin" id="schedInterval" type="number" min="5" value="60" style="width:80px"> minutes</label>
     <div id="schedStatus" style="color:var(--muted);font:12px var(--mono);margin:10px 0"></div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+    <hr style="border:none;border-top:1px solid var(--line);margin:14px 0">
+    <h2 style="font-size:14px">Notifications</h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">POST new findings to a webhook (Slack/Discord/generic compatible).</p>
+    <input class="tin" id="notifyUrl" placeholder="https://hooks.slack.com/… (blank to disable)" style="width:100%;margin-bottom:8px">
+    <label style="display:flex;align-items:center;gap:8px">Notify at/above
+      <select class="tin" id="notifyMin"><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select></label>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
       <button class="btn" id="scheduleCancel">Cancel</button><button class="btn primary" id="scheduleSave">Save</button>
     </div>
   </div>
@@ -610,7 +616,8 @@ function addRow(f, prepend){
   if(prepend) rowsEl.prepend(tr); else rowsEl.append(tr);
 }
 async function loadInitial(){
-  const flows=await (await fetch('/flows?limit=500')).json();
+  const q=filterText?('&q='+encodeURIComponent(filterText)):'';
+  const flows=await (await fetch('/flows?limit=500'+q)).json();
   rowsEl.innerHTML=''; (flows||[]).forEach(f=>addRow(f,false));
 }
 
@@ -1017,6 +1024,7 @@ async function openSchedule(){
     if(s.running) st+=' · RUNNING';
     $('#schedStatus').textContent=st;
   }catch(e){}
+  try{ const n=await (await fetch('/notify')).json(); $('#notifyUrl').value=n.webhookUrl||''; $('#notifyMin').value=n.minSeverity||'high'; }catch(e){}
   $('#scheduleModal').classList.add('show');
 }
 $('#scheduleBtn').addEventListener('click', openSchedule);
@@ -1024,7 +1032,8 @@ $('#scheduleClose').addEventListener('click', ()=>$('#scheduleModal').classList.
 $('#scheduleCancel').addEventListener('click', ()=>$('#scheduleModal').classList.remove('show'));
 $('#scheduleSave').addEventListener('click', async ()=>{
   await fetch('/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:$('#schedEnabled').checked,intervalMin:parseInt($('#schedInterval').value)||60})});
-  $('#scheduleModal').classList.remove('show'); toast('Schedule saved','ok');
+  await fetch('/notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({webhookUrl:$('#notifyUrl').value.trim(),minSeverity:$('#notifyMin').value})});
+  $('#scheduleModal').classList.remove('show'); toast('Saved','ok');
 });
 
 // Scope modal.
@@ -1495,6 +1504,17 @@ function fzRenderPayloads(){
 }
 $('#fzTpl').addEventListener('input', fzRenderPayloads);
 $('#fzAttack').addEventListener('change', fzRenderPayloads);
+$('#fzAI').addEventListener('click', async ()=>{
+  const ctx=prompt('Describe the payloads to generate (e.g. "SQL injection for a MySQL login form", "XSS filter bypasses"):');
+  if(!ctx) return;
+  const btn=$('#fzAI'); btn.disabled=true; btn.textContent='…';
+  try{ const r=await (await fetch('/ai/payloads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({context:ctx})})).json();
+    if(r.error){ if(/API key|configured/.test(r.error)){ toast('Configure AI first (AI button).','warn'); openAI(); } else toast(r.error,'warn'); }
+    else if(r.payloads&&r.payloads.length){ fzPLVals[0]=(fzPLVals[0]?fzPLVals[0]+'\n':'')+r.payloads.join('\n'); fzRenderPayloads(); toast(r.payloads.length+' AI payloads added','ok'); }
+    else toast('No payloads returned','warn');
+  }catch(e){ toast('AI payloads failed','warn'); }
+  btn.disabled=false; btn.textContent='✨ AI';
+});
 $('#fzWrap').addEventListener('click', ()=>{
   const ta=$('#fzTpl'); const s=ta.selectionStart, e=ta.selectionEnd;
   const v=ta.value; const sel=v.slice(s,e) || 'PAYLOAD';

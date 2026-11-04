@@ -18,6 +18,7 @@ import (
 	"log"
 
 	"github.com/gorilla/websocket"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -38,6 +39,7 @@ import (
 	"interlace/internal/macro"
 	"interlace/internal/matchreplace"
 	"interlace/internal/model"
+	"interlace/internal/notify"
 	"interlace/internal/oob"
 	"interlace/internal/proxy"
 	"interlace/internal/recon"
@@ -62,6 +64,12 @@ const version = "0.1.0"
 var reportTmpl = template.Must(template.New("report").Parse(reportTmplSrc))
 
 func main() {
+	// Headless CLI scan mode for CI pipelines: `interlace scan <url> [flags]`.
+	if len(os.Args) > 1 && os.Args[1] == "scan" {
+		runScanCLI(os.Args[2:])
+		return
+	}
+
 	var (
 		proxyAddr = flag.String("proxy", "127.0.0.1:8080", "proxy listen address")
 		apiAddr   = flag.String("api", "127.0.0.1:8081", "web UI + API listen address")
@@ -96,6 +104,7 @@ func main() {
 	ic := intercept.New(interHub)
 	wsIc := wsintercept.New(wsInterHub)
 	mr := matchreplace.Load(filepath.Join(*dataDir, "matchreplace.json"))
+	notifier := notify.Load(filepath.Join(*dataDir, "notify.json"))
 
 	// processFlow stores a captured flow, broadcasts it, and runs passive checks.
 	// Shared by the proxy and the crawler.
@@ -122,6 +131,7 @@ func main() {
 			if msg, err := json.Marshal(find); err == nil {
 				findHub.Broadcast(msg)
 			}
+			notifier.Notify(find)
 		}
 	}
 
@@ -177,11 +187,11 @@ func main() {
 
 	sched := scheduler.New(filepath.Join(*dataDir, "schedule.json"), func(ctx context.Context) {
 		log.Printf("scheduled scan starting")
-		n, f := scanAllInScope(ctx, st, sc, rep, oobSrv, findHub, nil)
+		n, f := scanAllInScope(ctx, st, sc, rep, oobSrv, findHub, notifier, nil)
 		log.Printf("scheduled scan done: %d endpoints, %d findings", n, f)
 	})
 
-	go serveAPI(*apiAddr, *proxyAddr, authority, st, h, findHub, rep, sc, oobSrv, oobHub, ic, interHub, processFlow, *insecure, mr, wsHub, sess, sched, macroStore, wsIc, wsInterHub, authzSess, authzSender, aiStore)
+	go serveAPI(*apiAddr, *proxyAddr, authority, st, h, findHub, rep, sc, oobSrv, oobHub, ic, interHub, processFlow, *insecure, mr, wsHub, sess, sched, macroStore, wsIc, wsInterHub, authzSess, authzSender, aiStore, notifier)
 
 	log.Printf("Interlace %s", version)
 	log.Printf("Interlace UI:    http://%s", *apiAddr)
@@ -247,8 +257,24 @@ func summarize(f *model.Flow) summary {
 	}
 }
 
-func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, findHub *hub.Hub, rep *repeater.Sender, sc *scope.Scope, oobSrv *oob.Server, oobHub *hub.Hub, ic *intercept.Interceptor, interHub *hub.Hub, processFlow func(*model.Flow), insecure bool, mr *matchreplace.Engine, wsHub *hub.Hub, sess *session.Session, sched *scheduler.Scheduler, macroStore *macro.Store, wsIc *wsintercept.Interceptor, wsInterHub *hub.Hub, authzSess *session.Session, authzSender *repeater.Sender, aiStore *ai.Store) {
+func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, findHub *hub.Hub, rep *repeater.Sender, sc *scope.Scope, oobSrv *oob.Server, oobHub *hub.Hub, ic *intercept.Interceptor, interHub *hub.Hub, processFlow func(*model.Flow), insecure bool, mr *matchreplace.Engine, wsHub *hub.Hub, sess *session.Session, sched *scheduler.Scheduler, macroStore *macro.Store, wsIc *wsintercept.Interceptor, wsInterHub *hub.Hub, authzSess *session.Session, authzSender *repeater.Sender, aiStore *ai.Store, notifier *notify.Notifier) {
 	mux := http.NewServeMux()
+
+	// Notification webhook settings.
+	mux.HandleFunc("/notify", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var in notify.Config
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if err := notifier.Set(in); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSON(w, notifier.Get())
+	})
 
 	// AI settings: configured status + model; POST sets the API key/model.
 	mux.HandleFunc("/ai", func(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +290,35 @@ func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, find
 			}
 		}
 		writeJSON(w, aiStore.Public())
+	})
+
+	// AI-generated fuzzing payloads for a described context.
+	mux.HandleFunc("/ai/payloads", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Context string `json:"context"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || strings.TrimSpace(in.Context) == "" {
+			http.Error(w, "describe the payload context", http.StatusBadRequest)
+			return
+		}
+		prompt := "Generate up to 25 attack payloads for this web application security testing context. " +
+			"Output ONLY the raw payloads, one per line — no numbering, no explanations, no markdown, no code fences.\n\nContext: " + in.Context
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		resp, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		var payloads []string
+		for _, ln := range strings.Split(resp, "\n") {
+			ln = strings.TrimSpace(ln)
+			ln = strings.TrimPrefix(ln, "- ")
+			if ln != "" && !strings.HasPrefix(ln, "```") {
+				payloads = append(payloads, ln)
+			}
+		}
+		writeJSON(w, map[string]any{"payloads": payloads})
 	})
 
 	// AI-assisted triage of a finding.
@@ -399,6 +454,7 @@ Provide, in concise markdown (under 250 words):
 				if msg, e := json.Marshal(fnd); e == nil {
 					findHub.Broadcast(msg)
 				}
+				notifier.Notify(fnd)
 			}
 			result["finding"] = true
 		}
@@ -817,7 +873,7 @@ Provide, in concise markdown (under 250 words):
 		enc := json.NewEncoder(w)
 		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Minute)
 		defer cancel()
-		scanned, found := scanAllInScope(ctx, st, sc, rep, oobSrv, findHub, func(p any) {
+		scanned, found := scanAllInScope(ctx, st, sc, rep, oobSrv, findHub, notifier, func(p any) {
 			_ = enc.Encode(p)
 			if flusher != nil {
 				flusher.Flush()
@@ -1009,7 +1065,7 @@ Provide, in concise markdown (under 250 words):
 
 	// List captured flows (summaries).
 	mux.HandleFunc("/flows", func(w http.ResponseWriter, r *http.Request) {
-		opts := store.ListOpts{Host: r.URL.Query().Get("host")}
+		opts := store.ListOpts{Host: r.URL.Query().Get("host"), Query: r.URL.Query().Get("q")}
 		if l := r.URL.Query().Get("limit"); l != "" {
 			opts.Limit, _ = strconv.Atoi(l)
 		}
@@ -1230,6 +1286,16 @@ func remediationFor(check string) string {
 		return "Avoid recursive merges of user input; reject __proto__/constructor keys and use null-prototype objects or Map."
 	case "broken-access-control":
 		return "Enforce server-side authorization on every request; verify the user owns/ may access the object (prevent IDOR)."
+	case "nosqli":
+		return "Validate/parse input types; use the driver's query builder with typed parameters, never raw operators from user input."
+	case "ldapi":
+		return "Escape LDAP filter metacharacters and use parameterized directory queries."
+	case "crlf":
+		return "Reject CR/LF in values used to build headers; use the framework's header API which encodes them."
+	case "graphql-introspection":
+		return "Disable schema introspection in production and apply per-field authorization and query depth/complexity limits."
+	case "graphql-endpoint", "tech-fingerprint":
+		return "Informational — review exposure and apply the relevant hardening for the identified surface/stack."
 	default:
 		return "Review and remediate according to secure-coding guidance."
 	}
@@ -1285,10 +1351,117 @@ func buildSARIF(findings []scanner.Finding) map[string]any {
 	}
 }
 
+// runScanCLI performs a one-shot headless crawl + active scan and writes a
+// SARIF or JSON report, exiting non-zero when findings meet the fail threshold.
+func runScanCLI(args []string) {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	out := fs.String("out", "", "write report to this file (default: stdout)")
+	format := fs.String("format", "sarif", "report format: sarif | json")
+	insecure := fs.Bool("insecure", true, "accept invalid upstream TLS certificates")
+	maxPages := fs.Int("max-pages", 50, "maximum pages to crawl")
+	oobURL := fs.String("oob", "http://127.0.0.1:8099", "out-of-band callback base URL")
+	failOn := fs.String("fail-on", "high", "exit non-zero if a finding at/above this severity exists: high|medium|low|none")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "Usage: interlace scan <url> [flags]\n\nFlags:")
+		fs.PrintDefaults()
+	}
+	// Accept `scan <url> [flags]` by pulling a leading positional URL out before
+	// flag parsing (Go's flag package otherwise stops at the first positional).
+	target := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		target = args[0]
+		args = args[1:]
+	}
+	_ = fs.Parse(args)
+	if target == "" {
+		target = fs.Arg(0)
+	}
+	if target == "" {
+		fs.Usage()
+		os.Exit(2)
+	}
+	u, err := url.Parse(target)
+	if err != nil || u.Host == "" {
+		fmt.Fprintln(os.Stderr, "invalid URL:", target)
+		os.Exit(2)
+	}
+
+	tmp, _ := os.MkdirTemp("", "interlace-scan-")
+	defer os.RemoveAll(tmp)
+
+	st, err := store.Open(filepath.Join(tmp, "project.db"))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "store:", err)
+		os.Exit(2)
+	}
+	defer st.Close()
+	sc := scope.Load(filepath.Join(tmp, "scope.json"))
+	_ = sc.Set([]string{u.Hostname()}, nil)
+	rep := repeater.New(*insecure)
+	oobSrv := oob.New(*oobURL, nil)
+	if _, p, e := net.SplitHostPort(strings.TrimPrefix(strings.TrimPrefix(*oobURL, "http://"), "https://")); e == nil {
+		go http.ListenAndServe("127.0.0.1:"+p, oobSrv.Handler())
+	}
+	notifier := notify.Load(filepath.Join(tmp, "notify.json"))
+	fh := hub.New()
+
+	process := func(f *model.Flow) {
+		id, _ := st.Insert(f)
+		f.ID = id
+		for _, find := range scanner.Scan(f) {
+			_, _, _ = st.InsertFinding(&find)
+		}
+	}
+
+	ctx := context.Background()
+	fmt.Fprintf(os.Stderr, "Interlace %s — scanning %s\n", version, target)
+	fmt.Fprintln(os.Stderr, "Crawling…")
+	_, _ = crawler.Crawl(ctx, crawler.Seed{URL: target}, *insecure, sc.InScope, process,
+		func(crawler.Progress) {}, *maxPages, nil)
+	fmt.Fprintln(os.Stderr, "Active scanning…")
+	n, found := scanAllInScope(ctx, st, sc, rep, oobSrv, fh, notifier, nil)
+	fmt.Fprintf(os.Stderr, "Scanned %d endpoint(s); %d active finding(s).\n", n, found)
+
+	findings, _ := st.ListFindings()
+	var data []byte
+	if *format == "json" {
+		counts := map[string]int{}
+		for _, f := range findings {
+			counts[f.Severity]++
+		}
+		data, _ = json.MarshalIndent(map[string]any{
+			"target": target, "generated": time.Now().Format(time.RFC3339),
+			"counts": counts, "findings": findings,
+		}, "", "  ")
+	} else {
+		data, _ = json.MarshalIndent(buildSARIF(findings), "", "  ")
+	}
+	if *out != "" {
+		if err := os.WriteFile(*out, data, 0o644); err != nil {
+			fmt.Fprintln(os.Stderr, "write:", err)
+			os.Exit(2)
+		}
+		fmt.Fprintf(os.Stderr, "Wrote %s (%d findings).\n", *out, len(findings))
+	} else {
+		os.Stdout.Write(data)
+		fmt.Fprintln(os.Stdout)
+	}
+
+	if *failOn != "none" {
+		thr := scanner.SeverityRank(*failOn)
+		for _, f := range findings {
+			if scanner.SeverityRank(f.Severity) <= thr {
+				fmt.Fprintf(os.Stderr, "Failing: found %s finding(s) at/above %q.\n", f.Severity, *failOn)
+				os.Exit(1)
+			}
+		}
+	}
+}
+
 // scanAllInScope runs an active scan over every in-scope captured endpoint
 // (deduplicated by host+path). emit, if non-nil, receives progress maps.
 func scanAllInScope(ctx context.Context, st *store.Store, sc *scope.Scope, rep *repeater.Sender,
-	oobSrv *oob.Server, findHub *hub.Hub, emit func(any)) (int, int) {
+	oobSrv *oob.Server, findHub *hub.Hub, notifier *notify.Notifier, emit func(any)) (int, int) {
 
 	flows, err := st.List(store.ListOpts{Limit: 1000})
 	if err != nil {
@@ -1329,6 +1502,7 @@ func scanAllInScope(ctx context.Context, st *store.Store, sc *scope.Scope, rep *
 					if msg, e := json.Marshal(f); e == nil {
 						findHub.Broadcast(msg)
 					}
+					notifier.Notify(f)
 					found++
 				}
 			})

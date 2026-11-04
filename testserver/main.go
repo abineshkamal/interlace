@@ -219,6 +219,43 @@ func main() {
 }`)
 	})
 
+	// GraphQL with introspection enabled.
+	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		if strings.Contains(string(buf[:n]), "__schema") {
+			fmt.Fprint(w, `{"data":{"__schema":{"queryType":{"name":"Query"},"types":[{"name":"User"}]}}}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":{}}`)
+	})
+	// NoSQL injection.
+	mux.HandleFunc("/nosql", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("q")
+		if strings.Contains(q, "||") || strings.Contains(q, "$ne") || strings.Contains(q, "$gt") {
+			fmt.Fprint(w, "MongoError: unexpected token in query filter")
+			return
+		}
+		fmt.Fprint(w, "ok")
+	})
+	// LDAP injection.
+	mux.HandleFunc("/ldap", func(w http.ResponseWriter, r *http.Request) {
+		u := r.URL.Query().Get("u")
+		if strings.Contains(u, ")(") || strings.Contains(u, "*)") {
+			fmt.Fprint(w, "javax.naming.directory: LDAPException Bad search filter")
+			return
+		}
+		fmt.Fprint(w, "ok")
+	})
+	// CRLF / header injection (simulated: reflects an injected header).
+	mux.HandleFunc("/crlf", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("x"), "X-Interlace-CRLF") {
+			w.Header().Set("X-Interlace-CRLF", "injected")
+		}
+		fmt.Fprint(w, "ok")
+	})
+
 	// Mock OpenAI-compatible Chat Completions endpoint (to test AI provider-agnostic path).
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

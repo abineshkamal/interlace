@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"interlace/internal/model"
@@ -109,6 +110,7 @@ func (s *Store) Insert(f *model.Flow) (int64, error) {
 // ListOpts controls List filtering/pagination.
 type ListOpts struct {
 	Host   string // substring match on host, optional
+	Query  string // full-text search across url/host/path and bodies, optional
 	Limit  int
 	Offset int
 }
@@ -121,9 +123,18 @@ func (s *Store) List(opts ListOpts) ([]model.Flow, error) {
 	query := `SELECT id, ts, method, scheme, host, path, url, status_code, content_type, duration_ms, error, COALESCE(LENGTH(resp_body),0)
 	          FROM flows`
 	args := []any{}
+	var where []string
 	if opts.Host != "" {
-		query += ` WHERE host LIKE ?`
+		where = append(where, `host LIKE ?`)
 		args = append(args, "%"+opts.Host+"%")
+	}
+	if opts.Query != "" {
+		where = append(where, `(url LIKE ? OR host LIKE ? OR path LIKE ? OR CAST(req_body AS TEXT) LIKE ? OR CAST(resp_body AS TEXT) LIKE ?)`)
+		q := "%" + opts.Query + "%"
+		args = append(args, q, q, q, q, q)
+	}
+	if len(where) > 0 {
+		query += ` WHERE ` + strings.Join(where, " AND ")
 	}
 	query += ` ORDER BY id DESC LIMIT ? OFFSET ?`
 	args = append(args, opts.Limit, opts.Offset)
