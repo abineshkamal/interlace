@@ -56,9 +56,21 @@
     "name": "Server-Side Template Injection",
     "severity": "high",
     "type": "grep",
-    "payloads": ["{{1338*1337}}", "${1338*1337}", "#{1338*1337}", "{{1338*1337}}<%=1338*1337%>"],
+    "payloads": [
+      "{{1338*1337}}",
+      "${1338*1337}",
+      "#{1338*1337}",
+      "<%= 1338*1337 %>",
+      "${{1338*1337}}",
+      "#{ 1338*1337 }",
+      "*{1338*1337}",
+      "@(1338*1337)",
+      "{{= 1338*1337}}",
+      "${1338*1337}#{1338*1337}<%=1338*1337%>{{1338*1337}}",
+      "}}${1338*1337}{{1338*1337}}${{1338*1337}}<%=1338*1337%>"
+    ],
     "grep": ["1788906"],
-    "detail": "A template expression (1338*1337) was evaluated by the server to 1788906, indicating server-side template injection."
+    "detail": "A template expression (1338*1337) was evaluated by the server to 1788906, indicating server-side template injection. Polyglot payloads cover Jinja2/Twig, FreeMarker/EL, Ruby/Thymeleaf, ERB and Razor engines."
   },
   {
     "id": "cmdi",

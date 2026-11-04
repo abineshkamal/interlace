@@ -61,7 +61,7 @@ type DiscoveryResult struct {
 }
 
 // Session applies auth headers to recon requests (optional).
-type Session interface{ Apply(http.Header) }
+type Session interface{ Apply(host string, h http.Header) }
 
 // ContentDiscovery brute-forces words under scheme://host, reporting paths that
 // differ from the host's not-found baseline and feeding found pages to onFlow.
@@ -192,7 +192,7 @@ func probe(ctx context.Context, c *http.Client, u string, sess Session) (int, in
 	}
 	req.Header.Set("User-Agent", "Interlace-Recon")
 	if sess != nil {
-		sess.Apply(req.Header)
+		sess.Apply(req.URL.Host, req.Header)
 	}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -211,7 +211,7 @@ func fetch(ctx context.Context, c *http.Client, u string, sess Session) (*model.
 	}
 	req.Header.Set("User-Agent", "Interlace-Recon")
 	if sess != nil {
-		sess.Apply(req.Header)
+		sess.Apply(req.URL.Host, req.Header)
 	}
 	resp, err := c.Do(req)
 	if err != nil {
@@ -243,7 +243,7 @@ func getBody(ctx context.Context, c *http.Client, method, u string, header http.
 		}
 	}
 	if sess != nil {
-		sess.Apply(req.Header)
+		sess.Apply(req.URL.Host, req.Header)
 	}
 	resp, err := c.Do(req)
 	if err != nil {

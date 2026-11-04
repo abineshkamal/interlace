@@ -4,7 +4,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -279,14 +281,47 @@ func main() {
 
 	// Mock OpenAI-compatible Chat Completions endpoint (to test AI provider-agnostic path).
 	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		reqBody, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"## Assessment\n- Likely a **true positive**.\n- Impact: data exposure.\n- Remediation: validate input and enforce authorization."}}]}`)
+		content := `## Assessment\n- Likely a **true positive**.\n- Impact: data exposure.\n- Remediation: validate input and enforce authorization.`
+		// For natural-language scope requests, return a JSON array of matching URLs.
+		if strings.Contains(string(reqBody), "JSON array") {
+			content = `[\"http://127.0.0.1:9000/login\", \"http://127.0.0.1:9000/admin/data\"]`
+		}
+		fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":"%s"}}]}`, content)
 	})
 
 	// A clean endpoint (no issues) to confirm the scanner doesn't false-positive.
 	mux.HandleFunc("/safe", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, "<html>ok</html>")
+	})
+
+	// CSRF token page: returns an anti-CSRF token in the body (for testing the
+	// session CSRF auto-refresh feature).
+	mux.HandleFunc("/csrftoken", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<form><input type="hidden" name="csrf_token" value="CSRF-TKN-55aa"></form>`)
+	})
+
+	// Proxied endpoint: emits a Via header to simulate sitting behind a front-end
+	// proxy (used to exercise the request-smuggling gate).
+	mux.HandleFunc("/proxied", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Via", "1.1 interlace-demo-proxy")
+		fmt.Fprint(w, "behind a proxy\n")
+	})
+
+	// Mass assignment: naively binds the whole JSON body into a user object and
+	// echoes it back, so any extra fields (role, isAdmin, …) are reflected.
+	mux.HandleFunc("/massassign", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var m map[string]any
+		if json.Unmarshal(body, &m) != nil {
+			m = map[string]any{}
+		}
+		out, _ := json.Marshal(map[string]any{"updated": true, "user": m})
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(out)
 	})
 
 	fmt.Println("vulnerable test server on http://127.0.0.1:9000")

@@ -13,11 +13,12 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 
 **Automation & scanning**
 - ✅ Passive scanner: security headers, cookies, CORS (+reflection/null-origin), mixed content, cacheable-sensitive, **exposed secrets**, **weak JWTs**, **technology fingerprinting**
-- ✅ Active scanner: SQLi (error/boolean/time), XSS, SSTI, path traversal, command injection, open redirect, **XXE**, **SSRF**, **prototype pollution**, **NoSQL**, **LDAP**, **CRLF/header injection**, **insecure deserialization**, **host-header injection**, **web cache poisoning**, **HTTP request smuggling (CL.TE / TE.CL, timing-based)**, blind SSRF (OOB), **GraphQL introspection**
+- ✅ Active scanner: SQLi (error/boolean/time), XSS, SSTI (**multi-engine polyglots**), path traversal, command injection, open redirect, **XXE**, **SSRF**, **prototype pollution**, **mass assignment**, **NoSQL**, **LDAP**, **CRLF/header injection**, **insecure deserialization**, **host-header injection**, **web cache poisoning**, **HTTP request smuggling (CL.TE / TE.CL, timing-based, proxy-gated)**, blind SSRF (OOB), **GraphQL introspection**
 - ✅ Insertion points: query, form body, cookies, JSON body
 - ✅ Crawler, content discovery, parameter mining
-- ✅ Scope guardrail (fail-closed), authenticated sessions, login macros, scheduled scans
-- ✅ **Authorization testing** (Autorize-style broken-access-control / IDOR)
+- ✅ Scope guardrail (fail-closed), authenticated sessions, **per-host session rules**, **CSRF token auto-refresh**, login macros, scheduled scans
+- ✅ **AI natural-language target selection** ("scan all login endpoints" → picks endpoints, adds hosts to scope)
+- ✅ **Authorization testing** (Autorize-style broken-access-control / IDOR), **analyst notes on findings**
 
 **Integration & output**
 - ✅ HTML / JSON / **SARIF** reports (grouped by host, remediation guidance)
@@ -27,20 +28,18 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 - ✅ **AI-assisted triage** + **executive summary**, **provider-agnostic** (Anthropic or any OpenAI-compatible / local model), **AI-generated fuzzing payloads**
 - ✅ **OpenAPI / Swagger / Postman import** to seed scan targets
 - ✅ **Project export/import** (single portable JSON file)
-- ✅ **UI access token**, **save/load Fuzzer presets**, **light/dark theme toggle**
+- ✅ **Save/load Repeater requests**, **UI access token**, **save/load Fuzzer presets**, **light/dark theme toggle**
 - ✅ Extensible JSON plugin checks (`<data>/rules/`)
 
 ## Planned
 
-- 🟡 Session handling: auto-refresh CSRF tokens, per-host session rules
-- 🟡 Multi-project switching; save/load Repeater sessions
-- 🟡 AI natural-language scope ("scan all login endpoints")
-- 🟡 More checks: SSRF via DNS rebinding, SSTI polyglots, mass-assignment
+- 🟡 Multi-project switching in-app (today: one project per `--data` dir, moved via project export/import)
+- 🟡 More checks: SSRF via DNS rebinding, more mass-assignment heuristics
 
 ## Long-term
 
-- 🔴 Headless-browser crawling (SPA support + DOM-based XSS)
-- 🔴 DNS-based out-of-band (requires a public domain)
-- 🔴 Real-time multi-user collaboration (shared session, comments)
+- 🔴 Headless-browser crawling (SPA support + DOM-based XSS) — needs an embedded Chromium
+- 🔴 DNS-based out-of-band (requires a public domain + DNS server)
+- 🔴 Real-time multi-user collaboration (shared live session; finding notes already shared)
 
 Contributions and check-rule PRs welcome.

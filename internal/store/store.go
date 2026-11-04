@@ -61,6 +61,15 @@ CREATE TABLE IF NOT EXISTS ws_messages (
 	opcode    TEXT,
 	payload   TEXT
 );
+
+CREATE TABLE IF NOT EXISTS saved_requests (
+	id     INTEGER PRIMARY KEY AUTOINCREMENT,
+	ts     INTEGER NOT NULL,
+	name   TEXT    NOT NULL,
+	scheme TEXT    NOT NULL,
+	host   TEXT    NOT NULL,
+	raw    TEXT    NOT NULL
+);
 `
 
 // Store wraps the SQLite database connection.
@@ -82,6 +91,13 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
+	}
+	// Lightweight migration for databases created before the note column existed.
+	// SQLite has no "ADD COLUMN IF NOT EXISTS"; a duplicate-column error is benign.
+	if _, err := db.Exec(`ALTER TABLE findings ADD COLUMN note TEXT`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("migrate findings.note: %w", err)
 	}
 	return &Store{db: db}, nil
 }
@@ -245,7 +261,7 @@ func (s *Store) InsertFinding(f *scanner.Finding) (id int64, inserted bool, err 
 // ListFindings returns findings most-severe first, then newest.
 func (s *Store) ListFindings() ([]scanner.Finding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, flow_id, ts, severity, check_slug, title, detail, host, url, evidence, COALESCE(source,'passive')
+		`SELECT id, flow_id, ts, severity, check_slug, title, detail, host, url, evidence, COALESCE(source,'passive'), COALESCE(note,'')
 		 FROM findings
 		 ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, id DESC
 		 LIMIT 2000`)
@@ -258,13 +274,63 @@ func (s *Store) ListFindings() ([]scanner.Finding, error) {
 		var f scanner.Finding
 		var tsMilli int64
 		if err := rows.Scan(&f.ID, &f.FlowID, &tsMilli, &f.Severity, &f.Check,
-			&f.Title, &f.Detail, &f.Host, &f.URL, &f.Evidence, &f.Source); err != nil {
+			&f.Title, &f.Detail, &f.Host, &f.URL, &f.Evidence, &f.Source, &f.Note); err != nil {
 			return nil, fmt.Errorf("scan finding: %w", err)
 		}
 		f.Time = time.UnixMilli(tsMilli)
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// SetFindingNote stores (or clears) an analyst note on a finding.
+func (s *Store) SetFindingNote(id int64, note string) error {
+	_, err := s.db.Exec(`UPDATE findings SET note = ? WHERE id = ?`, note, id)
+	return err
+}
+
+// SavedRequest is a named, reusable Repeater request.
+type SavedRequest struct {
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Scheme string `json:"scheme"`
+	Host   string `json:"host"`
+	Raw    string `json:"raw"`
+}
+
+// SaveRequest persists a named Repeater request and returns its ID.
+func (s *Store) SaveRequest(r SavedRequest) (int64, error) {
+	res, err := s.db.Exec(
+		`INSERT INTO saved_requests (ts, name, scheme, host, raw) VALUES (?,?,?,?,?)`,
+		time.Now().UnixMilli(), r.Name, r.Scheme, r.Host, r.Raw)
+	if err != nil {
+		return 0, fmt.Errorf("save request: %w", err)
+	}
+	return res.LastInsertId()
+}
+
+// ListSavedRequests returns saved Repeater requests, newest first.
+func (s *Store) ListSavedRequests() ([]SavedRequest, error) {
+	rows, err := s.db.Query(`SELECT id, name, scheme, host, raw FROM saved_requests ORDER BY id DESC LIMIT 500`)
+	if err != nil {
+		return nil, fmt.Errorf("list saved requests: %w", err)
+	}
+	defer rows.Close()
+	var out []SavedRequest
+	for rows.Next() {
+		var r SavedRequest
+		if err := rows.Scan(&r.ID, &r.Name, &r.Scheme, &r.Host, &r.Raw); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteSavedRequest removes a saved Repeater request by ID.
+func (s *Store) DeleteSavedRequest(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM saved_requests WHERE id = ?`, id)
+	return err
 }
 
 // CountFindings returns the total number of findings.

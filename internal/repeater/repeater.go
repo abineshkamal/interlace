@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -39,17 +40,28 @@ type Response struct {
 	Error      string `json:"error,omitempty"`
 }
 
-// Applier adds configured session headers to outgoing requests (optional).
-type Applier interface{ Apply(http.Header) }
+// Applier adds configured session headers (global + per-host) to outgoing
+// requests (optional).
+type Applier interface{ Apply(host string, h http.Header) }
+
+// CSRFProvider supplies a fresh anti-CSRF token to inject into state-changing
+// requests (optional). inject is "header", "query" or "form".
+type CSRFProvider interface {
+	CSRFToken(ctx context.Context) (name, value, inject string, ok bool)
+}
 
 // Sender issues Repeater requests over a shared transport.
 type Sender struct {
 	tr      *http.Transport
 	session Applier
+	csrf    CSRFProvider
 }
 
 // SetSession attaches a session header applier used on every send.
 func (s *Sender) SetSession(a Applier) { s.session = a }
+
+// SetCSRF attaches an anti-CSRF token provider used on state-changing sends.
+func (s *Sender) SetCSRF(p CSRFProvider) { s.csrf = p }
 
 // New builds a Sender. If insecure is true, invalid upstream TLS certs are
 // accepted (common when testing targets with self-signed certs).
@@ -81,8 +93,8 @@ func (s *Sender) Send(ctx context.Context, in Request) Response {
 		return Response{Error: "no target host (set Host or the target field)"}
 	}
 
-	url := in.Scheme + "://" + host + requestURI
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	target := in.Scheme + "://" + host + requestURI
+	req, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
 		return Response{Error: "build request: " + err.Error()}
 	}
@@ -104,7 +116,37 @@ func (s *Sender) Send(ctx context.Context, in Request) Response {
 	}
 	// Attach authenticated-session headers (if configured).
 	if s.session != nil {
-		s.session.Apply(req.Header)
+		s.session.Apply(req.Host, req.Header)
+	}
+
+	// Attach a fresh anti-CSRF token to state-changing requests (if configured).
+	if s.csrf != nil {
+		switch method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+			if name, value, inject, ok := s.csrf.CSRFToken(ctx); ok {
+				switch inject {
+				case "query":
+					q := req.URL.Query()
+					q.Set(name, value)
+					req.URL.RawQuery = q.Encode()
+				case "form":
+					if strings.Contains(strings.ToLower(req.Header.Get("Content-Type")), "x-www-form-urlencoded") {
+						extra := name + "=" + url.QueryEscape(value)
+						if len(body) > 0 {
+							body = append(append(body, '&'), extra...)
+						} else {
+							body = []byte(extra)
+						}
+						req.Body = io.NopCloser(bytes.NewReader(body))
+						req.ContentLength = int64(len(body))
+					} else {
+						req.Header.Set(name, value) // fall back to a header
+					}
+				default: // "header"
+					req.Header.Set(name, value)
+				}
+			}
+		}
 	}
 
 	start := time.Now()

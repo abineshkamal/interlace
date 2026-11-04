@@ -162,6 +162,7 @@ func main() {
 	sc := scope.Load(filepath.Join(*dataDir, "scope.json"))
 	sess := session.Load(filepath.Join(*dataDir, "session.json"))
 	rep.SetSession(sess)
+	rep.SetCSRF(sess)
 	macroStore := macro.Load(filepath.Join(*dataDir, "macro.json"))
 	authzSess := session.Load(filepath.Join(*dataDir, "authz-session.json")) // low-privilege identity
 	authzSender := repeater.New(*insecure)                                    // no session applied
@@ -359,6 +360,82 @@ In markdown, under 220 words: overall risk posture, the most important issues to
 			return
 		}
 		writeJSON(w, map[string]string{"summary": summary})
+	})
+
+	// AI natural-language scope / target selection: the user describes what to
+	// test ("all login and account endpoints") and the model picks the matching
+	// endpoints from captured traffic. With apply=true the distinct hosts of the
+	// matches are added to the scope include-list.
+	mux.HandleFunc("/ai/scope", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Instruction string `json:"instruction"`
+			Apply       bool   `json:"apply"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(in.Instruction) == "" {
+			writeJSON(w, map[string]any{"error": "describe what to scan (e.g. \"all login endpoints\")"})
+			return
+		}
+		flows, _ := st.List(store.ListOpts{Limit: 1000})
+		// Build a distinct, de-duplicated endpoint list (method + url without query).
+		seen := map[string]bool{}
+		var endpoints []string
+		for _, f := range flows {
+			u := f.Scheme + "://" + f.Host + strings.Split(f.Path, "?")[0]
+			key := f.Method + " " + u
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			endpoints = append(endpoints, key)
+			if len(endpoints) >= 200 {
+				break
+			}
+		}
+		if len(endpoints) == 0 {
+			writeJSON(w, map[string]any{"error": "no captured endpoints yet — browse the target through the proxy first"})
+			return
+		}
+		prompt := fmt.Sprintf(`From the list of observed HTTP endpoints below, select the ones that match this instruction: %q
+
+Endpoints:
+%s
+
+Return ONLY a JSON array of the full matching URLs (strings), no prose, no code fences. If none match, return [].`,
+			in.Instruction, strings.Join(endpoints, "\n"))
+
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		out, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		matched := parseJSONStringArray(out)
+		// Distinct hosts of the matched URLs.
+		hostSet := map[string]bool{}
+		var hosts []string
+		for _, m := range matched {
+			if u, e := url.Parse(m); e == nil && u.Host != "" {
+				h := u.Hostname()
+				if !hostSet[h] {
+					hostSet[h] = true
+					hosts = append(hosts, h)
+				}
+			}
+		}
+		applied := false
+		if in.Apply && len(hosts) > 0 {
+			inc, exc := sc.Get()
+			inc = append(inc, hosts...)
+			if err := sc.Set(inc, exc); err == nil {
+				applied = true
+			}
+		}
+		writeJSON(w, map[string]any{"matched": matched, "hosts": hosts, "applied": applied})
 	})
 
 	// AI-assisted triage of a finding.
@@ -607,6 +684,42 @@ Provide, in concise markdown (under 250 words):
 			}
 		}
 		writeJSON(w, sess.Get())
+	})
+
+	// Per-host session rules (different credentials per target host).
+	mux.HandleFunc("/session/hostrules", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var rules []session.HostRule
+			if err := json.NewDecoder(r.Body).Decode(&rules); err != nil {
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := sess.SetHostRules(rules); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		rules := sess.HostRules()
+		if rules == nil {
+			rules = []session.HostRule{}
+		}
+		writeJSON(w, rules)
+	})
+
+	// CSRF auto-refresh configuration.
+	mux.HandleFunc("/session/csrf", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var c session.CSRFConfig
+			if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if err := sess.SetCSRF(c); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSON(w, sess.CSRF())
 	})
 
 	// WebSocket messages: list + live stream.
@@ -1119,6 +1232,68 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, rep.Send(ctx, in))
 	})
 
+	// Saved Repeater requests: GET lists, POST saves {name,scheme,host,raw},
+	// DELETE ?id= removes one.
+	mux.HandleFunc("/repeater/saved", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			items, err := st.ListSavedRequests()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if items == nil {
+				items = []store.SavedRequest{}
+			}
+			writeJSON(w, items)
+		case http.MethodPost:
+			var in store.SavedRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if strings.TrimSpace(in.Name) == "" {
+				in.Name = "untitled"
+			}
+			id, err := st.SaveRequest(in)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"id": id})
+		case http.MethodDelete:
+			id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+			if err := st.DeleteSavedRequest(id); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	// Attach or clear an analyst note on a finding (triage collaboration).
+	mux.HandleFunc("/findings/note", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		var in struct {
+			ID   int64  `json:"id"`
+			Note string `json:"note"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := st.SetFindingNote(in.ID, in.Note); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
 	// Fuzzer: run an Intruder-style attack, streaming one NDJSON result per line.
 	mux.HandleFunc("/fuzz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1436,6 +1611,21 @@ func sseStream(w http.ResponseWriter, r *http.Request, h *hub.Hub) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// parseJSONStringArray extracts the first JSON array of strings from s, tolerating
+// surrounding prose or markdown code fences the model may add.
+func parseJSONStringArray(s string) []string {
+	start := strings.IndexByte(s, '[')
+	end := strings.LastIndexByte(s, ']')
+	if start < 0 || end <= start {
+		return nil
+	}
+	var out []string
+	if json.Unmarshal([]byte(s[start:end+1]), &out) != nil {
+		return nil
+	}
+	return out
 }
 
 // remediationFor returns short remediation guidance for a check.

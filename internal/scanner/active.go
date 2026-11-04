@@ -229,7 +229,8 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 		checkHostHeader(ctx, t, req, sender, report, &probes, &mu)
 		checkCachePoisoning(ctx, t, req, sender, report, &probes, &mu)
 		checkDeser(ctx, t, req, sender, report, &probes, &mu)
-		checkSmuggle(ctx, t, req, report, &probes, &mu)
+		checkMassAssignment(ctx, t, req, sender, report, &probes, &mu)
+		checkSmuggle(ctx, t, req, sender, report, &probes, &mu)
 	}
 
 	// Resolve out-of-band checks: give callbacks a moment to arrive.
@@ -289,19 +290,91 @@ func checkDeser(ctx context.Context, t Target, req *request, sender *repeater.Se
 	}
 }
 
-// checkSmuggle runs timing-based HTTP request smuggling (CL.TE / TE.CL) probes
-// against the target. It is a request-level check (independent of insertion
-// points) and reports a High finding per technique that induced a desync delay.
-func checkSmuggle(ctx context.Context, t Target, req *request, report func(Finding), probes *int, mu *sync.Mutex) {
-	hostHdr := req.host
-	results, sent := smuggle.Detect(ctx, t.Scheme, t.Host, req.path, hostHdr)
+// checkMassAssignment tests JSON endpoints for mass assignment / auto-binding by
+// adding privileged-looking fields that were not in the original request and
+// checking whether the server bound and reflected them (absent from a clean
+// baseline). This is a candidate indicator that warrants manual confirmation.
+func checkMassAssignment(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	if !req.isJSON {
+		return
+	}
+	switch req.method {
+	case "POST", "PUT", "PATCH":
+	default:
+		return
+	}
+	base := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.render(nil, "")})
+
+	marker := "ilxMA" + randToken()
+	extra := map[string]any{
+		"role": marker, "isAdmin": true, "is_admin": true, "admin": true,
+		"isVerified": true, "account_balance": 1337, "ilx_injected": marker,
+	}
+	obj := make(map[string]any, len(req.jsonObj)+len(extra))
+	for k, v := range req.jsonObj {
+		obj[k] = v
+	}
+	for k, v := range extra {
+		obj[k] = v
+	}
+	bs, err := json.Marshal(obj)
+	if err != nil {
+		return
+	}
+	resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.renderBody(string(bs))})
+	mu.Lock()
+	*probes += 2
+	mu.Unlock()
+	if resp.Error != "" {
+		return
+	}
+	if strings.Contains(resp.Body, marker) && !strings.Contains(base.Body, marker) {
+		report(Finding{
+			Severity: Medium, Check: "mass-assignment", Title: "Potential Mass Assignment",
+			Detail:   "The endpoint bound and reflected privileged fields (e.g. role/isAdmin) that were not part of the original request, indicating object auto-binding without an allow-list. Confirm manually whether these fields change authorization or state.",
+			Evidence: "injected privileged field was reflected in the response", Source: "active",
+			Key: "mass-assignment|" + t.Host + "|" + req.path,
+		})
+	}
+}
+
+// proxyIndicatorRe matches response headers that reveal a front-end proxy, CDN
+// or cache in front of the origin. HTTP request smuggling requires such a chain,
+// so we only probe for it when one is present — otherwise a single origin that
+// merely honours Transfer-Encoding would stall on the deliberately-incomplete
+// chunk exactly like a desynced back-end, producing false positives.
+var proxyIndicatorRe = regexp.MustCompile(`(?im)^(via|x-cache|x-cache-hits|x-varnish|age|cf-ray|x-amz-cf-id|x-served-by|x-fastly[a-z-]*|fastly-[a-z-]*|x-akamai[a-z-]*|x-forwarded-[a-z-]*|forwarded|x-proxy[a-z-]*|x-envoy[a-z-]*):`)
+
+// serverIndicatorRe matches Server: values of common reverse proxies / load balancers.
+var serverIndicatorRe = regexp.MustCompile(`(?im)^server:\s*(cloudflare|varnish|squid|haproxy|envoy|traefik|awselb|akamaighost|ats/)`)
+
+// checkSmuggle runs timing-based HTTP request smuggling (CL.TE / TE.CL) probes,
+// but only against targets that sit behind a front-end proxy/cache (where
+// smuggling is possible). It is a request-level check and reports a Medium
+// "possible desync" finding per technique that induced a delay, flagged for
+// manual confirmation.
+func checkSmuggle(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	// Gate on evidence of a front-end proxy/cache; also saves the probe cost on
+	// direct origins.
+	base := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.render(nil, "")})
+	mu.Lock()
+	*probes++
+	mu.Unlock()
+	if base.Error != "" {
+		return
+	}
+	if !proxyIndicatorRe.MatchString(base.Headers) && !serverIndicatorRe.MatchString(base.Headers) {
+		return // no front-end chain → smuggling is not applicable
+	}
+
+	results, sent := smuggle.Detect(ctx, t.Scheme, t.Host, req.path, req.host)
 	mu.Lock()
 	*probes += sent
 	mu.Unlock()
 	for _, r := range results {
 		report(Finding{
-			Severity: High, Check: "http-request-smuggling", Title: "HTTP Request Smuggling (" + r.Technique + ")",
-			Detail:   "A timing probe indicates the front-end and back-end disagree on request framing (" + r.Technique + "), allowing request smuggling / desync. This can poison other users' requests, bypass front-end access controls, and capture credentials.",
+			Severity: Medium, Check: "http-request-smuggling", Title: "Possible HTTP Request Smuggling (" + r.Technique + ")",
+			Detail:   "A front-end proxy/cache was detected and a timing probe suggests it and the back-end may disagree on request framing (" + r.Technique + "), a potential desync. This can poison other users' requests and bypass front-end controls. Timing-based detection is indicative only — confirm manually before acting.",
 			Evidence: r.Evidence, Source: "active",
 			Key: "http-request-smuggling|" + r.Technique + "|" + t.Host + "|" + req.path,
 		})

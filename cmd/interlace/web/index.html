@@ -512,6 +512,22 @@ Host: httpbin.org
     <p style="color:var(--muted);margin:2px 0 10px;font-size:12px">Headers (e.g. a low-role Cookie) used by the <b>⚖ Authz</b> button to replay requests as a different user.</p>
     <table style="width:100%;font:12px var(--mono)"><tbody id="authzRows"></tbody></table>
     <div style="display:flex;gap:8px;margin-top:8px"><button class="btn" id="authzAdd">+ Add header</button><button class="btn primary" id="authzSave">Save low-priv identity</button></div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Per-host rules</h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Extra headers applied only to matching hosts (exact host, <code class="kbd">.suffix</code> for subdomains, or <code class="kbd">*</code>). JSON array of <code class="kbd">{"pattern","headers":[{"name","value"}]}</code>.</p>
+    <textarea id="hostRules" spellcheck="false" placeholder='[{"pattern":"api.example.com","headers":[{"name":"X-Api-Key","value":"…"}]}]' style="width:100%;height:80px;background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:8px;font:12px var(--mono);resize:vertical"></textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><span id="hostRulesMsg" class="muted" style="margin-right:auto;font:12px var(--mono)"></span><button class="btn primary" id="hostRulesSave">Save host rules</button></div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">CSRF auto-refresh</h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Before each state-changing request, Interlace fetches a page, extracts a fresh anti-CSRF token and injects it — so authenticated POST/PUT/PATCH/DELETE requests aren't rejected.</p>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:8px"><input type="checkbox" id="csrfEnabled"> Enabled</label>
+    <input class="tin" id="csrfUrl" placeholder="Token page URL (e.g. https://app/account)" style="width:100%;margin-bottom:6px">
+    <input class="tin" id="csrfRegex" placeholder='Regex with one capture group (e.g. name="csrf" value="([^"]+)")' style="width:100%;margin-bottom:6px">
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <select class="tin" id="csrfInject"><option value="header">header</option><option value="query">query param</option><option value="form">form field</option></select>
+      <input class="tin" id="csrfName" placeholder="Header/param name (e.g. X-CSRF-Token)" style="flex:1">
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px"><span id="csrfMsg" class="muted" style="margin-right:auto;font:12px var(--mono)"></span><button class="btn primary" id="csrfSave">Save CSRF config</button></div>
   </div>
 </div>
 
@@ -530,6 +546,15 @@ Host: httpbin.org
       <button class="btn" id="scopeCancel">Cancel</button>
       <button class="btn primary" id="scopeSave">Save scope</button>
     </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">AI target selection <span style="color:var(--muted);font-weight:400;font-size:12px">(natural language)</span></h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Describe what to test in plain English; the configured AI picks matching endpoints from captured traffic and can add their hosts to scope.</p>
+    <div style="display:flex;gap:6px">
+      <input class="tin" id="aiScopeInput" placeholder='e.g. "all login and account management endpoints"' style="flex:1">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px"><input type="checkbox" id="aiScopeApply" checked> add hosts to scope</label>
+      <button class="btn primary" id="aiScopeBtn">Select</button>
+    </div>
+    <div id="aiScopeResult" style="margin-top:8px;font:12px var(--mono);color:var(--muted)"></div>
     <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
     <h2 style="font-size:14px">Import API spec</h2>
     <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Paste an OpenAPI 3, Swagger 2 or Postman collection (JSON). Each endpoint is requested, added to history and scope, ready to scan.</p>
@@ -756,6 +781,8 @@ function renderRepeater(){
         <select class="tin" id="repScheme"><option value="https">https</option><option value="http">http</option></select>
         <input class="tin host" id="repHost" placeholder="host:port" value="${esc(t.host)}">
         <button class="btn primary" id="repSend">Send ▶</button>
+        <button class="btn" id="repSave" title="Save this request">💾 Save</button>
+        <select class="tin" id="repSavedSel" title="Load a saved request"><option value="">📁 Saved…</option></select>
       </div>
       <textarea class="req" id="repReq" spellcheck="false">${esc(t.raw)}</textarea>
     </div>
@@ -766,6 +793,9 @@ function renderRepeater(){
     </div>`;
   $('#repScheme').value=t.scheme;
   $('#repSend').addEventListener('click', sendRepeater);
+  $('#repSave').addEventListener('click', saveRepeaterReq);
+  loadSavedRepeaterList();
+  $('#repSavedSel').addEventListener('change', e=>{ if(e.target.value) loadSavedRepeaterReq(e.target.value); });
   const rd=$('#repDiff');
   if(rd) rd.addEventListener('click', ()=>{
     $('#nav-tools').click(); toolTab('comparer');
@@ -797,6 +827,35 @@ async function sendRepeater(){
   renderRepeater();
 }
 $('#rtabAdd').addEventListener('click', ()=>{ saveActiveEditor(); addRepeaterTab('tab '+(repSeq+1),'https','','GET / HTTP/1.1\r\nHost: \r\n\r\n'); });
+
+// Saved Repeater requests (persisted server-side).
+let savedReqs=[];
+async function loadSavedRepeaterList(){
+  try{ savedReqs=await (await fetch('/repeater/saved')).json(); }catch(e){ savedReqs=[]; }
+  const sel=$('#repSavedSel'); if(!sel) return;
+  sel.innerHTML='<option value="">📁 Saved…</option>'+
+    savedReqs.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')+
+    (savedReqs.length?'<option value="__del">🗑 Delete a saved…</option>':'');
+}
+async function saveRepeaterReq(){
+  saveActiveEditor();
+  const t=repTabs.find(t=>t.id===repActive); if(!t) return;
+  const name=prompt('Save request as:', t.name||'request'); if(!name) return;
+  await fetch('/repeater/saved',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name, scheme:t.scheme, host:t.host, raw:t.raw})});
+  loadSavedRepeaterList();
+}
+async function loadSavedRepeaterReq(id){
+  if(id==='__del'){
+    const list=savedReqs.map(s=>s.id+': '+s.name).join('\n');
+    const d=prompt('Enter the id to delete:\n'+list);
+    if(d){ await fetch('/repeater/saved?id='+encodeURIComponent(d),{method:'DELETE'}); loadSavedRepeaterList(); }
+    $('#repSavedSel').value=''; return;
+  }
+  const s=savedReqs.find(x=>String(x.id)===String(id)); if(!s) return;
+  saveActiveEditor();
+  addRepeaterTab(s.name, s.scheme, s.host, s.raw);
+}
 
 /* ---------- Issues (passive scanner) ---------- */
 let findings=[], findSel=null;
@@ -851,8 +910,22 @@ function showFinding(id, node){
         ${f.flowId?`<button class="btn" id="viewFlow">View request #${f.flowId}</button>`:''}
         <button class="btn primary" id="aiTriageBtn">🤖 Analyze with AI</button>
       </div>
+      <div style="margin-top:14px">
+        <div class="rlabel" style="margin-bottom:4px">Analyst note</div>
+        <textarea class="tin" id="findNote" style="width:100%;min-height:52px;resize:vertical" placeholder="Triage note / comment (shared in the project)…">${esc(f.note||'')}</textarea>
+        <button class="btn" id="findNoteSave" style="margin-top:6px">Save note</button>
+        <span id="findNoteMsg" class="muted" style="margin-left:8px"></span>
+      </div>
       <div id="aiTriageBox" style="margin-top:12px"></div>
     </div>`;
+  const ns=$('#findNoteSave');
+  if(ns) ns.addEventListener('click', async ()=>{
+    const note=$('#findNote').value;
+    await fetch('/findings/note',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:f.id, note})});
+    f.note=note; $('#findNoteMsg').textContent='saved ✓';
+    setTimeout(()=>{ const m=$('#findNoteMsg'); if(m) m.textContent=''; }, 1500);
+  });
   const vf=$('#viewFlow');
   if(vf) vf.addEventListener('click', ()=>{ $('#nav-proxy').click();
     fetch('/flow?id='+f.flowId).then(r=>r.ok?select(f.flowId,null):null); });
@@ -1126,8 +1199,42 @@ function authzAddRow(h){ const t=document.createElement('tbody'); t.innerHTML=au
 async function openSession(){
   try{ const hs=await (await fetch('/session')).json()||[]; $('#sessRows').innerHTML=''; hs.forEach(sessAddRow); if(!hs.length) sessAddRow(); }catch(e){}
   try{ const az=await (await fetch('/authz')).json()||[]; $('#authzRows').innerHTML=''; az.forEach(authzAddRow); if(!az.length) authzAddRow(); }catch(e){}
+  try{ const hr=await (await fetch('/session/hostrules')).json()||[]; $('#hostRules').value = hr.length? JSON.stringify(hr,null,2):''; }catch(e){}
+  try{ const c=await (await fetch('/session/csrf')).json()||{};
+    $('#csrfEnabled').checked=!!c.enabled; $('#csrfUrl').value=c.url||''; $('#csrfRegex').value=c.regex||'';
+    $('#csrfInject').value=c.inject||'header'; $('#csrfName').value=c.name||''; }catch(e){}
   $('#sessionModal').classList.add('show');
 }
+$('#hostRulesSave').addEventListener('click', async ()=>{
+  const txt=$('#hostRules').value.trim();
+  let rules=[]; if(txt){ try{ rules=JSON.parse(txt); }catch(e){ $('#hostRulesMsg').textContent='invalid JSON'; return; } }
+  await fetch('/session/hostrules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(rules)});
+  $('#hostRulesMsg').textContent='saved ✓'; toast('Per-host rules saved','ok');
+  setTimeout(()=>{ const m=$('#hostRulesMsg'); if(m) m.textContent=''; },1500);
+});
+$('#csrfSave').addEventListener('click', async ()=>{
+  const cfg={enabled:$('#csrfEnabled').checked, url:$('#csrfUrl').value.trim(), regex:$('#csrfRegex').value.trim(),
+    inject:$('#csrfInject').value, name:$('#csrfName').value.trim()};
+  await fetch('/session/csrf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});
+  $('#csrfMsg').textContent='saved ✓'; toast('CSRF auto-refresh saved','ok');
+  setTimeout(()=>{ const m=$('#csrfMsg'); if(m) m.textContent=''; },1500);
+});
+$('#aiScopeBtn').addEventListener('click', async ()=>{
+  const instruction=$('#aiScopeInput').value.trim(); if(!instruction){ toast('Describe what to scan','warn'); return; }
+  const box=$('#aiScopeResult'); box.textContent='asking the model…';
+  try{
+    const r=await (await fetch('/ai/scope',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({instruction, apply:$('#aiScopeApply').checked})})).json();
+    if(r.error){ box.textContent='error: '+r.error; box.style.color='var(--red)'; return; }
+    box.style.color='var(--muted)';
+    const m=(r.matched||[]);
+    box.innerHTML = m.length
+      ? `matched ${m.length} endpoint(s):<br>`+m.map(esc).join('<br>')+
+        (r.applied?`<br><span style="color:var(--green)">added hosts to scope: ${(r.hosts||[]).map(esc).join(', ')}</span>`:'')
+      : 'no matching endpoints found';
+    if(r.applied){ try{ const s=await (await fetch('/scope')).json(); $('#scopeInc').value=(s.include||[]).join('\n'); scopeInc=s.include||[]; }catch(e){} }
+  }catch(e){ box.textContent='failed'; }
+});
 document.addEventListener('click', e=>{
   if(e.target.id==='authzAdd') authzAddRow();
   if(e.target.id==='authzSave'){

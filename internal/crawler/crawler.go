@@ -35,7 +35,7 @@ type Progress struct {
 var linkRe = regexp.MustCompile(`(?i)(?:href|src|action)\s*=\s*["']([^"'#]+)["']`)
 
 // Applier adds session headers to a request (optional).
-type Applier interface{ Apply(http.Header) }
+type Applier interface{ Apply(host string, h http.Header) }
 
 // Crawl visits up to maxPages in-scope pages reachable from seed. For each page
 // it builds a model.Flow and calls onFlow (which the caller wires to storage and
@@ -120,7 +120,7 @@ func fetch(ctx context.Context, client *http.Client, u *url.URL, session Applier
 	}
 	req.Header.Set("User-Agent", "Interlace-Crawler")
 	if session != nil {
-		session.Apply(req.Header)
+		session.Apply(req.URL.Host, req.Header)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

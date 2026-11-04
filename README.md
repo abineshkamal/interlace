@@ -21,11 +21,16 @@ serves its entire UI from a browser — no JVM, no external services.
 **Automation**
 - **Passive scanner** — security headers, cookie flags, CORS, mixed content,
   exposed secrets (API keys, tokens, private keys), weak JWTs
-- **Active scanner** — SQL injection (error / boolean / time-based), XSS, SSTI,
-  path traversal, command injection, open redirect, XXE, SSRF, prototype
-  pollution, NoSQL / LDAP / CRLF injection, insecure deserialization,
-  host-header injection, web cache poisoning, **HTTP request smuggling**
-  (CL.TE / TE.CL timing), blind SSRF (out-of-band), GraphQL introspection
+- **Active scanner** — SQL injection (error / boolean / time-based), XSS, SSTI
+  (multi-engine polyglots), path traversal, command injection, open redirect,
+  XXE, SSRF, prototype pollution, mass assignment, NoSQL / LDAP / CRLF
+  injection, insecure deserialization, host-header injection, web cache
+  poisoning, **HTTP request smuggling** (CL.TE / TE.CL timing, proxy-gated),
+  blind SSRF (out-of-band), GraphQL introspection
+- **Authenticated testing** — global session headers, per-host session rules,
+  CSRF token auto-refresh, and login macros
+- **AI natural-language target selection** — describe what to test and let the
+  configured model pick matching endpoints from captured traffic
 - **Crawler**, **content discovery**, **parameter mining**
 - **Scope** guardrail (fail-closed), authenticated sessions, **login macros**,
   recurring **scheduled** scans

@@ -40,6 +40,7 @@ type Finding struct {
 	URL      string    `json:"url"`
 	Evidence string    `json:"evidence"`
 	Source   string    `json:"source"` // "passive" or "active"
+	Note     string    `json:"note"`   // analyst note / triage comment
 	Key      string    `json:"-"`      // dedup key
 }
 
