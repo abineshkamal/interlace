@@ -183,6 +183,34 @@ func (s *Store) Get(id int64) (*model.Flow, error) {
 	return &f, nil
 }
 
+// ExportFlows returns every flow with bodies and headers (for project export).
+func (s *Store) ExportFlows() ([]model.Flow, error) {
+	rows, err := s.db.Query(
+		`SELECT id, ts, method, scheme, host, path, url, req_headers, req_body,
+			status_code, resp_headers, resp_body, content_type, duration_ms, error
+		 FROM flows ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("export flows: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Flow
+	for rows.Next() {
+		var f model.Flow
+		var tsMilli int64
+		var reqH, respH string
+		if err := rows.Scan(&f.ID, &tsMilli, &f.Method, &f.Scheme, &f.Host, &f.Path, &f.URL,
+			&reqH, &f.ReqBody, &f.StatusCode, &respH, &f.RespBody, &f.ContentType,
+			&f.DurationMs, &f.Error); err != nil {
+			return nil, err
+		}
+		f.Timestamp = time.UnixMilli(tsMilli)
+		f.ReqHeaders = decodeHeader(reqH)
+		f.RespHeaders = decodeHeader(respH)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // Clear removes all stored flows and findings.
 func (s *Store) Clear() error {
 	if _, err := s.db.Exec(`DELETE FROM flows`); err != nil {

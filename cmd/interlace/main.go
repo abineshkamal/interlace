@@ -35,6 +35,7 @@ import (
 	"interlace/internal/crawler"
 	"interlace/internal/fuzzer"
 	"interlace/internal/hub"
+	"interlace/internal/importer"
 	"interlace/internal/intercept"
 	"interlace/internal/macro"
 	"interlace/internal/matchreplace"
@@ -78,6 +79,7 @@ func main() {
 		openUI    = flag.Bool("open", true, "open the UI in the default browser on startup")
 		oobAddr   = flag.String("oob", "127.0.0.1:8082", "out-of-band interaction listener address")
 		oobURL    = flag.String("oob-url", "", "public base URL for OOB callbacks (default http://<oob>)")
+		authToken = flag.String("token", "", "require this access token for the UI/API (empty = no auth)")
 	)
 	flag.Parse()
 
@@ -191,7 +193,11 @@ func main() {
 		log.Printf("scheduled scan done: %d endpoints, %d findings", n, f)
 	})
 
-	go serveAPI(*apiAddr, *proxyAddr, authority, st, h, findHub, rep, sc, oobSrv, oobHub, ic, interHub, processFlow, *insecure, mr, wsHub, sess, sched, macroStore, wsIc, wsInterHub, authzSess, authzSender, aiStore, notifier)
+	go serveAPI(*apiAddr, *proxyAddr, authority, st, h, findHub, rep, sc, oobSrv, oobHub, ic, interHub, processFlow, *insecure, mr, wsHub, sess, sched, macroStore, wsIc, wsInterHub, authzSess, authzSender, aiStore, notifier, *authToken)
+
+	if *authToken != "" {
+		log.Printf("Access token required — open http://%s/?token=%s", *apiAddr, *authToken)
+	}
 
 	log.Printf("Interlace %s", version)
 	log.Printf("Interlace UI:    http://%s", *apiAddr)
@@ -257,7 +263,7 @@ func summarize(f *model.Flow) summary {
 	}
 }
 
-func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, findHub *hub.Hub, rep *repeater.Sender, sc *scope.Scope, oobSrv *oob.Server, oobHub *hub.Hub, ic *intercept.Interceptor, interHub *hub.Hub, processFlow func(*model.Flow), insecure bool, mr *matchreplace.Engine, wsHub *hub.Hub, sess *session.Session, sched *scheduler.Scheduler, macroStore *macro.Store, wsIc *wsintercept.Interceptor, wsInterHub *hub.Hub, authzSess *session.Session, authzSender *repeater.Sender, aiStore *ai.Store, notifier *notify.Notifier) {
+func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, findHub *hub.Hub, rep *repeater.Sender, sc *scope.Scope, oobSrv *oob.Server, oobHub *hub.Hub, ic *intercept.Interceptor, interHub *hub.Hub, processFlow func(*model.Flow), insecure bool, mr *matchreplace.Engine, wsHub *hub.Hub, sess *session.Session, sched *scheduler.Scheduler, macroStore *macro.Store, wsIc *wsintercept.Interceptor, wsInterHub *hub.Hub, authzSess *session.Session, authzSender *repeater.Sender, aiStore *ai.Store, notifier *notify.Notifier, authToken string) {
 	mux := http.NewServeMux()
 
 	// Notification webhook settings.
@@ -319,6 +325,40 @@ func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, find
 			}
 		}
 		writeJSON(w, map[string]any{"payloads": payloads})
+	})
+
+	// AI executive summary of all findings.
+	mux.HandleFunc("/ai/summary", func(w http.ResponseWriter, r *http.Request) {
+		findings, _ := st.ListFindings()
+		if len(findings) == 0 {
+			writeJSON(w, map[string]string{"error": "no findings to summarize"})
+			return
+		}
+		counts := map[string]int{}
+		var lines []string
+		for i, f := range findings {
+			counts[f.Severity]++
+			if i < 40 {
+				lines = append(lines, "- ["+f.Severity+"] "+f.Title+" @ "+f.Host)
+			}
+		}
+		prompt := fmt.Sprintf(`Write a concise executive summary of this web application security scan for a technical audience.
+
+Totals: %d high, %d medium, %d low, %d info.
+
+Findings:
+%s
+
+In markdown, under 220 words: overall risk posture, the most important issues to fix first, and recommended next steps.`,
+			counts["high"], counts["medium"], counts["low"], counts["info"], strings.Join(lines, "\n"))
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		summary, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]string{"summary": summary})
 	})
 
 	// AI-assisted triage of a finding.
@@ -639,6 +679,91 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, mr.Get())
 	})
 
+	// Import an API spec (OpenAPI/Swagger/Postman): send each request to seed
+	// history + scan targets, and add the host to scope.
+	mux.HandleFunc("/import", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Spec    string `json:"spec"`
+			BaseURL string `json:"baseUrl"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		reqs, err := importer.Parse([]byte(in.Spec), in.BaseURL)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+		defer cancel()
+		client := &http.Client{Timeout: 15 * time.Second,
+			Transport:     &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: insecure}}, //nolint:gosec
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		hosts := map[string]bool{}
+		imported := 0
+		for _, ir := range reqs {
+			if ctx.Err() != nil {
+				break
+			}
+			u, err := url.Parse(ir.URL)
+			if err != nil || u.Host == "" {
+				continue
+			}
+			var bodyRdr *strings.Reader
+			if ir.Body != "" {
+				bodyRdr = strings.NewReader(ir.Body)
+			} else {
+				bodyRdr = strings.NewReader("")
+			}
+			hreq, err := http.NewRequestWithContext(ctx, ir.Method, ir.URL, bodyRdr)
+			if err != nil {
+				continue
+			}
+			for k, v := range ir.Headers {
+				hreq.Header.Set(k, v)
+			}
+			start := time.Now()
+			resp, err := client.Do(hreq)
+			flow := &model.Flow{Timestamp: start, Method: ir.Method, Scheme: u.Scheme, Host: u.Hostname(),
+				Path: u.RequestURI(), URL: ir.URL, ReqHeaders: hreq.Header, ReqBody: []byte(ir.Body)}
+			if err != nil {
+				flow.Error = err.Error()
+			} else {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+				resp.Body.Close()
+				flow.StatusCode = resp.StatusCode
+				flow.RespHeaders = resp.Header
+				flow.RespBody = body
+				flow.ContentType = resp.Header.Get("Content-Type")
+			}
+			flow.DurationMs = time.Since(start).Milliseconds()
+			processFlow(flow)
+			hosts[u.Hostname()] = true
+			imported++
+		}
+		// Add imported hosts to scope.
+		inc, exc := sc.Get()
+		for h := range hosts {
+			found := false
+			for _, e := range inc {
+				if e == h {
+					found = true
+				}
+			}
+			if !found {
+				inc = append(inc, h)
+			}
+		}
+		_ = sc.Set(inc, exc)
+
+		var hostList []string
+		for h := range hosts {
+			hostList = append(hostList, h)
+		}
+		writeJSON(w, map[string]any{"imported": imported, "hosts": hostList})
+	})
+
 	// Content discovery: brute-force hidden paths on a scope-gated host.
 	mux.HandleFunc("/discover", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -945,6 +1070,7 @@ Provide, in concise markdown (under 250 words):
 					if msg, e := json.Marshal(f); e == nil {
 						findHub.Broadcast(msg)
 					}
+					notifier.Notify(f)
 				}
 				mu.Lock()
 				_ = enc.Encode(f)
@@ -1098,6 +1224,58 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, f)
 	})
 
+	// Export the whole project as one portable JSON file.
+	mux.HandleFunc("/project/export", func(w http.ResponseWriter, r *http.Request) {
+		flows, _ := st.ExportFlows()
+		findings, _ := st.ListFindings()
+		inc, exc := sc.Get()
+		w.Header().Set("Content-Disposition", `attachment; filename="interlace-project.json"`)
+		writeJSON(w, map[string]any{
+			"version": version, "exported": time.Now().Format(time.RFC3339),
+			"flows": flows, "findings": findings,
+			"scope":       map[string][]string{"include": inc, "exclude": exc},
+			"session":     sess.Get(),
+			"matchreplace": mr.Get(),
+		})
+	})
+
+	// Import a project JSON file (merges into the current project).
+	mux.HandleFunc("/project/import", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Flows        []model.Flow        `json:"flows"`
+			Findings     []scanner.Finding   `json:"findings"`
+			Scope        map[string][]string `json:"scope"`
+			Session      []session.Header    `json:"session"`
+			MatchReplace []matchreplace.Rule `json:"matchreplace"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		nf := 0
+		for i := range in.Flows {
+			if _, err := st.Insert(&in.Flows[i]); err == nil {
+				nf++
+			}
+		}
+		nfind := 0
+		for i := range in.Findings {
+			if _, ins, _ := st.InsertFinding(&in.Findings[i]); ins {
+				nfind++
+			}
+		}
+		if in.Scope != nil {
+			_ = sc.Set(in.Scope["include"], in.Scope["exclude"])
+		}
+		if in.Session != nil {
+			_ = sess.Set(in.Session)
+		}
+		if in.MatchReplace != nil {
+			_ = mr.Set(in.MatchReplace)
+		}
+		writeJSON(w, map[string]any{"flows": nf, "findings": nfind})
+	})
+
 	// Clear all history.
 	mux.HandleFunc("/clear", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1191,9 +1369,30 @@ Provide, in concise markdown (under 250 words):
 		sseStream(w, r, h)
 	})
 
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	var handler http.Handler = mux
+	if authToken != "" {
+		handler = tokenAuth(authToken, mux)
+	}
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Printf("api server stopped: %v", err)
 	}
+}
+
+// tokenAuth gates all requests behind an access token. The token may be supplied
+// once via ?token=… (which sets a cookie) and thereafter via that cookie.
+func tokenAuth(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if q := r.URL.Query().Get("token"); q == token {
+			http.SetCookie(w, &http.Cookie{Name: "interlace_token", Value: token, Path: "/", HttpOnly: true})
+			next.ServeHTTP(w, r)
+			return
+		}
+		if c, err := r.Cookie("interlace_token"); err == nil && c.Value == token {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, "Unauthorized — open this page with ?token=YOUR_TOKEN", http.StatusUnauthorized)
+	})
 }
 
 // sseStream subscribes to a hub and relays messages to the client as SSE until
@@ -1296,6 +1495,12 @@ func remediationFor(check string) string {
 		return "Disable schema introspection in production and apply per-field authorization and query depth/complexity limits."
 	case "graphql-endpoint", "tech-fingerprint":
 		return "Informational — review exposure and apply the relevant hardening for the identified surface/stack."
+	case "insecure-deser":
+		return "Never deserialize untrusted input; use data-only formats (JSON) and signed/allowlisted deserialization."
+	case "host-header-injection":
+		return "Validate the Host header against an allowlist; build absolute URLs from configuration, not the request Host."
+	case "cache-poisoning":
+		return "Add all response-affecting headers to the cache key, or stop reflecting unkeyed headers like X-Forwarded-Host."
 	default:
 		return "Review and remediate according to secure-coding guidance."
 	}

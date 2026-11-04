@@ -113,6 +113,15 @@
     "detail": "The parameter caused the server to fetch a local file or internal/metadata resource, indicating server-side request forgery."
   },
   {
+    "id": "insecure-deser",
+    "name": "Insecure Deserialization",
+    "severity": "high",
+    "type": "grep",
+    "payloads": ["rO0ABXQABHRlc3Q=", "O:8:\"stdClass\":0:{}", "(dp0\nS'a'\np1\nI1\ns.", "!!python/object/apply:os.system []"],
+    "grep": ["java.io.InvalidClassException", "java.io.StreamCorruptedException", "ObjectInputStream", "unserialize\\(\\)", "__PHP_Incomplete_Class", "pickle", "yaml.load", "InvalidObjectException", "ClassNotFoundException"],
+    "detail": "A serialized-object payload triggered a deserialization error, indicating the application deserializes untrusted input."
+  },
+  {
     "id": "open-redirect",
     "name": "Open Redirect",
     "severity": "medium",

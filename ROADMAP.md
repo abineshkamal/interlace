@@ -13,7 +13,7 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 
 **Automation & scanning**
 - ✅ Passive scanner: security headers, cookies, CORS (+reflection/null-origin), mixed content, cacheable-sensitive, **exposed secrets**, **weak JWTs**, **technology fingerprinting**
-- ✅ Active scanner: SQLi (error/boolean/time), XSS, SSTI, path traversal, command injection, open redirect, **XXE**, **SSRF**, **prototype pollution**, **NoSQL**, **LDAP**, **CRLF/header injection**, blind SSRF (OOB), **GraphQL introspection**
+- ✅ Active scanner: SQLi (error/boolean/time), XSS, SSTI, path traversal, command injection, open redirect, **XXE**, **SSRF**, **prototype pollution**, **NoSQL**, **LDAP**, **CRLF/header injection**, **insecure deserialization**, **host-header injection**, **web cache poisoning**, blind SSRF (OOB), **GraphQL introspection**
 - ✅ Insertion points: query, form body, cookies, JSON body
 - ✅ Crawler, content discovery, parameter mining
 - ✅ Scope guardrail (fail-closed), authenticated sessions, login macros, scheduled scans
@@ -24,17 +24,18 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 - ✅ **Headless CLI scan mode** (`interlace scan <url>`) with exit codes
 - ✅ **Docker image** + **GitHub Action** (SARIF → code scanning)
 - ✅ **Webhook notifications** (Slack/Discord/generic) on findings
-- ✅ **AI-assisted triage**, **provider-agnostic** (Anthropic or any OpenAI-compatible / local model)
+- ✅ **AI-assisted triage** + **executive summary**, **provider-agnostic** (Anthropic or any OpenAI-compatible / local model), **AI-generated fuzzing payloads**
+- ✅ **OpenAPI / Swagger / Postman import** to seed scan targets
+- ✅ **Project export/import** (single portable JSON file)
+- ✅ **UI access token**, **save/load Fuzzer presets**, **light/dark theme toggle**
 - ✅ Extensible JSON plugin checks (`<data>/rules/`)
 
 ## Planned
 
-- 🟡 OpenAPI / Swagger / Postman import to seed scan targets
 - 🟡 Session handling: auto-refresh CSRF tokens, per-host session rules
-- 🟡 Project export/import (single portable file), multi-project switching
-- 🟡 AI executive summary on reports; AI natural-language scope
-- 🟡 UI access token, save/load Fuzzer/Repeater sessions, light/dark toggle
-- 🟡 More checks: insecure deserialization, host-header injection, web cache poisoning
+- 🟡 Multi-project switching; save/load Repeater sessions
+- 🟡 AI natural-language scope ("scan all login endpoints")
+- 🟡 More checks: SSRF via DNS rebinding, SSTI polyglots, mass-assignment
 
 ## Long-term
 

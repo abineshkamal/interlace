@@ -219,6 +219,27 @@ func main() {
 }`)
 	})
 
+	// Insecure deserialization.
+	mux.HandleFunc("/deser", func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, 4096)
+		n, _ := r.Body.Read(buf)
+		b := string(buf[:n])
+		if strings.Contains(b, "rO0AB") || strings.Contains(b, "O:8:") {
+			fmt.Fprint(w, "java.io.InvalidClassException: bad descriptor (ObjectInputStream)")
+			return
+		}
+		fmt.Fprint(w, "ok")
+	})
+	// Host header injection (reflects Host).
+	mux.HandleFunc("/hostcheck", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "<html>Reset link: https://%s/reset</html>", r.Host)
+	})
+	// Cache poisoning (reflects X-Forwarded-Host in a cacheable response).
+	mux.HandleFunc("/cache", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		fmt.Fprintf(w, "<link href=\"https://%s/app.js\">", r.Header.Get("X-Forwarded-Host"))
+	})
+
 	// GraphQL with introspection enabled.
 	mux.HandleFunc("/graphql", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

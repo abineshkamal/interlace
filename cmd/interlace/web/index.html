@@ -12,6 +12,10 @@
     --mono:ui-monospace,"Cascadia Code","Consolas",monospace;
     --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
   }
+  :root[data-theme="light"]{
+    --bg:#f6f7f9; --bg2:#ffffff; --bg3:#eceef2; --line:#d9dde6;
+    --fg:#1e2330; --muted:#64748b;
+  }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
   body{background:var(--bg);color:var(--fg);font:13px/1.5 var(--sans);display:flex;flex-direction:column;overflow:hidden}
@@ -196,6 +200,7 @@
   <button class="btn ghost" id="scopeBtn">Scope</button>
   <button class="btn ghost" id="sessionBtn">Session</button>
   <button class="btn ghost" id="aiBtn">AI</button>
+  <button class="btn ghost" id="themeBtn" title="Toggle light/dark">◐</button>
   <button class="btn ghost" id="setupBtn">Setup</button>
   <button class="btn ghost" id="certBtn">Download CA</button>
   <button class="btn ghost" id="clearBtn">Clear</button>
@@ -238,6 +243,7 @@
     <div class="ihint" id="ihint">Passive &amp; active findings. <span id="isummary"></span>
       <select class="tin" id="sevFilter" style="margin-left:10px"><option value="">all severities</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select>
       <span style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="aiSummaryBtn">🤖 AI summary</button>
         <button class="btn" id="scheduleBtn">⏱ Schedule</button>
         <button class="btn" id="scanAllBtn">⚡ Scan all in-scope</button>
         <button class="btn" id="reportBtn">HTML report</button>
@@ -400,6 +406,8 @@
           <option value="clusterbomb">Cluster bomb</option>
         </select>
         <button class="btn" id="fzWrap" title="Wrap the selected text in § position markers">Add § position</button>
+        <button class="btn" id="fzSavePreset" title="Save this attack config">💾</button>
+        <button class="btn" id="fzLoadPreset" title="Load a saved attack config">📁</button>
         <div class="grow"></div>
         <span class="fz-progress" id="fzProgress"></span>
         <button class="btn primary" id="fzStart">Start ▶</button>
@@ -522,6 +530,15 @@ Host: httpbin.org
       <button class="btn" id="scopeCancel">Cancel</button>
       <button class="btn primary" id="scopeSave">Save scope</button>
     </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Import API spec</h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Paste an OpenAPI 3, Swagger 2 or Postman collection (JSON). Each endpoint is requested, added to history and scope, ready to scan.</p>
+    <input class="tin" id="importBase" placeholder="Base URL (e.g. https://api.example.com) — optional if in spec" style="width:100%;margin-bottom:6px">
+    <textarea id="importSpec" spellcheck="false" placeholder="{ &quot;openapi&quot;: &quot;3.0.0&quot;, … }" style="width:100%;height:90px;background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:8px;font:12px var(--mono);resize:vertical"></textarea>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+      <span id="importStatus" style="color:var(--muted);font:12px var(--mono)"></span>
+      <button class="btn primary" id="importBtn">Import</button>
+    </div>
   </div>
 </div>
 
@@ -535,6 +552,14 @@ Host: httpbin.org
       <li>Browse an <b>authorized</b> target — requests appear live.</li>
     </ol>
     <p style="color:var(--muted);margin:14px 0 0;font-size:12px">Interlace is for testing systems you own or are permitted to test.</p>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Project</h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Save or restore the whole project (traffic, findings, scope, session, rules) as one portable file.</p>
+    <div style="display:flex;gap:8px">
+      <button class="btn" id="projExport">Export project</button>
+      <button class="btn" id="projImport">Import project</button>
+      <input type="file" id="projFile" accept=".json" style="display:none">
+    </div>
   </div>
 </div>
 
@@ -1050,6 +1075,15 @@ async function saveScope(){
   $('#scopeModal').classList.remove('show'); toast('Scope saved','ok');
 }
 $('#sevFilter').addEventListener('change', e=>{ sevFilterVal=e.target.value; renderIssueList(); });
+$('#aiSummaryBtn').addEventListener('click', async ()=>{
+  const btn=$('#aiSummaryBtn'); btn.disabled=true; btn.textContent='Summarizing…';
+  $('#idetail').innerHTML='<div class="body"><span style="color:var(--muted)">Generating executive summary…</span></div>';
+  try{ const r=await (await fetch('/ai/summary',{method:'POST'})).json();
+    if(r.error){ if(/API key|configured/.test(r.error)){ toast('Configure AI first (AI button).','warn'); openAI(); } else toast(r.error,'warn'); $('#idetail').innerHTML='<div class="empty">Select a finding to see details.</div>'; }
+    else $('#idetail').innerHTML='<div class="ihead"><h2>🤖 Executive summary</h2></div><div class="body">'+mdToHtml(r.summary)+'</div>';
+  }catch(e){ toast('AI summary failed','warn'); }
+  btn.disabled=false; btn.textContent='🤖 AI summary';
+});
 $('#reportBtn').addEventListener('click', ()=>window.open('/report','_blank'));
 $('#reportJsonBtn').addEventListener('click', ()=>window.location='/report?format=json&dl=1');
 $('#reportSarifBtn').addEventListener('click', ()=>window.location='/report?format=sarif&dl=1');
@@ -1114,6 +1148,15 @@ $('#sessionModal').addEventListener('click', e=>{ if(e.target.id==='sessionModal
 $('#scopeClose').addEventListener('click', ()=>$('#scopeModal').classList.remove('show'));
 $('#scopeCancel').addEventListener('click', ()=>$('#scopeModal').classList.remove('show'));
 $('#scopeSave').addEventListener('click', saveScope);
+$('#importBtn').addEventListener('click', async ()=>{
+  const spec=$('#importSpec').value.trim(); if(!spec){ toast('Paste a spec first','warn'); return; }
+  $('#importStatus').textContent='importing…';
+  try{ const r=await (await fetch('/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({spec,baseUrl:$('#importBase').value.trim()})})).json();
+    if(r.error){ $('#importStatus').textContent='error: '+r.error; $('#importStatus').style.color='var(--red)'; return; }
+    $('#importStatus').textContent=`imported ${r.imported} request(s) · hosts: ${(r.hosts||[]).join(', ')}`; $('#importStatus').style.color='var(--green)';
+    loadInitial(); toast(`Imported ${r.imported} endpoints — added to scope`,'ok');
+  }catch(e){ $('#importStatus').textContent='failed'; }
+});
 $('#scopeModal').addEventListener('click', e=>{ if(e.target.id==='scopeModal') $('#scopeModal').classList.remove('show'); });
 
 /* ---------- Target site map ---------- */
@@ -1524,6 +1567,18 @@ $('#fzWrap').addEventListener('click', ()=>{
 });
 
 function fzLines(t){ return (t||'').split('\n').map(x=>x).filter(x=>x.length>0); }
+function fzPresets(){ try{ return JSON.parse(localStorage.getItem('interlace-fz-presets')||'{}'); }catch(e){ return {}; } }
+$('#fzSavePreset').addEventListener('click', ()=>{
+  const name=prompt('Save attack preset as:'); if(!name) return;
+  const p=fzPresets(); p[name]={scheme:$('#fzScheme').value,host:$('#fzHost').value,attack:$('#fzAttack').value,template:$('#fzTpl').value,grep:$('#fzGrep').value,extract:$('#fzExtract').value,payloads:fzPLVals};
+  try{ localStorage.setItem('interlace-fz-presets',JSON.stringify(p)); toast('Preset saved','ok'); }catch(e){ toast('Save failed','warn'); }
+});
+$('#fzLoadPreset').addEventListener('click', ()=>{
+  const p=fzPresets(); const names=Object.keys(p); if(!names.length){ toast('No saved presets','warn'); return; }
+  const name=prompt('Load preset ('+names.join(', ')+'):', names[0]); if(!name||!p[name]) return;
+  const c=p[name]; $('#fzScheme').value=c.scheme||'https'; $('#fzHost').value=c.host||''; $('#fzAttack').value=c.attack||'sniper';
+  $('#fzTpl').value=c.template||''; $('#fzGrep').value=c.grep||''; $('#fzExtract').value=c.extract||''; fzPLVals=c.payloads||{}; fzRenderPayloads(); toast('Preset loaded','ok');
+});
 async function processPayload(v, proc){
   switch(proc){
     case 'b64': return btoa(unescape(encodeURIComponent(v)));
@@ -1619,6 +1674,24 @@ $('#clearBtn').addEventListener('click', async ()=>{
   findings=[]; renderIssueList(); renderIssueSummary();
   $('#idetail').innerHTML='<div class="empty">Select a finding to see details.</div>';
   $('#wsRows').innerHTML=''; wsCount=0; $('#wsBadge').style.display='none';
+});
+$('#projExport').addEventListener('click', ()=>{ window.location='/project/export'; });
+$('#projImport').addEventListener('click', ()=>$('#projFile').click());
+$('#projFile').addEventListener('change', async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  try{ const text=await file.text();
+    const r=await (await fetch('/project/import',{method:'POST',headers:{'Content-Type':'application/json'},body:text})).json();
+    toast(`Imported ${r.flows} flow(s), ${r.findings} finding(s)`,'ok');
+    loadInitial(); loadFindings(); loadSiteMap();
+  }catch(err){ toast('Import failed: '+err,'warn'); }
+  e.target.value='';
+});
+// Theme toggle (persisted).
+(function(){ try{ const t=localStorage.getItem('interlace-theme'); if(t) document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
+$('#themeBtn').addEventListener('click', ()=>{
+  const cur=document.documentElement.getAttribute('data-theme')==='light'?'dark':'light';
+  document.documentElement.setAttribute('data-theme',cur);
+  try{ localStorage.setItem('interlace-theme',cur); }catch(e){}
 });
 $('#setupBtn').addEventListener('click', ()=>$('#setup').classList.add('show'));
 $('#setupClose').addEventListener('click', ()=>$('#setup').classList.remove('show'));

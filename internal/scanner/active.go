@@ -135,11 +135,8 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 		return 0, err
 	}
 	points := req.insertionPoints()
-	xmlApplicable := strings.Contains(req.contentType, "xml") || strings.HasPrefix(strings.TrimSpace(req.rawBodyRaw), "<")
-	gqlApplicable := strings.Contains(strings.ToLower(req.path), "graphql") || strings.Contains(req.contentType, "graphql")
-	if len(points) == 0 && !xmlApplicable && !req.isJSON && !gqlApplicable {
-		return 0, fmt.Errorf("no insertion points (add query or form-body parameters to the request)")
-	}
+	// Even with no parameter insertion points, request-level special checks
+	// (host-header injection, cache poisoning, XXE, GraphQL, …) still apply.
 
 	// Baseline response for differential grep checks.
 	baseResp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.render(nil, "")})
@@ -228,6 +225,9 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 		checkXXE(ctx, t, req, sender, report, &probes, &mu)
 		checkProtoPollution(ctx, t, req, sender, report, &probes, &mu)
 		checkGraphQL(ctx, t, req, sender, report, &probes, &mu)
+		checkHostHeader(ctx, t, req, sender, report, &probes, &mu)
+		checkCachePoisoning(ctx, t, req, sender, report, &probes, &mu)
+		checkDeser(ctx, t, req, sender, report, &probes, &mu)
 	}
 
 	// Resolve out-of-band checks: give callbacks a moment to arrive.
@@ -256,6 +256,36 @@ type pendingOOB struct {
 }
 
 var passwdRe = regexp.MustCompile(`root:.*:0:0:`)
+var deserRe = regexp.MustCompile(`(?i)(java\.io\.(Invalid(Class|Object)|StreamCorrupted)Exception|ObjectInputStream|ClassNotFoundException|__PHP_Incomplete_Class|unserialize\(\)|pickle|yaml\.load)`)
+
+// checkDeser tests body-accepting endpoints for insecure deserialization by
+// replacing the body with known serialized-object payloads.
+func checkDeser(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	switch req.method {
+	case "POST", "PUT", "PATCH":
+	default:
+		return
+	}
+	payloads := []string{"rO0ABXQABHRlc3Q=", "O:8:\"stdClass\":0:{}", "(dp0\nS'a'\np1\nI1\ns."}
+	for _, pl := range payloads {
+		if ctx.Err() != nil {
+			return
+		}
+		resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.renderBody(pl)})
+		mu.Lock()
+		*probes++
+		mu.Unlock()
+		if resp.Error == "" && deserRe.MatchString(resp.Body) {
+			report(Finding{
+				Severity: High, Check: "insecure-deser", Title: "Insecure Deserialization",
+				Detail:   "A serialized-object payload triggered a deserialization error, indicating the endpoint deserializes untrusted input.",
+				Evidence: "serialized payload caused a deserialization error", Source: "active",
+				Key: "insecure-deser|" + t.Host + "|" + req.path,
+			})
+			return
+		}
+	}
+}
 
 // checkXXE tests XML-accepting endpoints for external entity injection.
 func checkXXE(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
@@ -638,6 +668,99 @@ func checkGraphQL(ctx context.Context, t Target, req *request, sender *repeater.
 			Detail:   "Schema introspection is enabled, exposing the full API schema (types, queries, mutations) to any client. Disable it in production.",
 			Evidence: "introspection query returned __schema", Source: "active",
 			Key: "graphql-introspection|" + t.Host + "|" + path,
+		})
+	}
+}
+
+// renderHeaders rebuilds the raw request overriding/adding the given headers
+// (case-insensitive), keeping the original body.
+func (r *request) renderHeaders(override map[string]string) string {
+	lower := map[string]string{}
+	for k, v := range override {
+		lower[strings.ToLower(k)] = v
+	}
+	var sb strings.Builder
+	sb.WriteString(r.method + " " + r.path)
+	if len(r.query) > 0 {
+		sb.WriteString("?" + r.query.Encode())
+	}
+	sb.WriteString(" HTTP/1.1\r\n")
+	seen := map[string]bool{}
+	for _, h := range r.headers {
+		name := h
+		if c := strings.IndexByte(h, ':'); c >= 0 {
+			name = strings.TrimSpace(h[:c])
+		}
+		ln := strings.ToLower(name)
+		if v, ok := lower[ln]; ok {
+			sb.WriteString(name + ": " + v + "\r\n")
+			seen[ln] = true
+		} else {
+			sb.WriteString(h + "\r\n")
+		}
+	}
+	for k, v := range override {
+		if !seen[strings.ToLower(k)] {
+			sb.WriteString(k + ": " + v + "\r\n")
+		}
+	}
+	if len(r.cookies) > 0 {
+		var parts []string
+		for _, c := range r.cookies {
+			parts = append(parts, c.name+"="+c.value)
+		}
+		sb.WriteString("Cookie: " + strings.Join(parts, "; ") + "\r\n")
+	}
+	sb.WriteString("\r\n")
+	switch {
+	case r.isForm:
+		sb.WriteString(r.body.Encode())
+	case r.isJSON:
+		if bs, err := json.Marshal(r.jsonObj); err == nil {
+			sb.Write(bs)
+		}
+	default:
+		sb.WriteString(r.rawBody)
+	}
+	return sb.String()
+}
+
+// checkHostHeader tests whether the Host header is reflected (host-header injection).
+func checkHostHeader(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	marker := "interlace-hhi.example"
+	resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.renderHeaders(map[string]string{"Host": marker})})
+	mu.Lock()
+	*probes++
+	mu.Unlock()
+	if resp.Error == "" && (strings.Contains(resp.Body, marker) || strings.Contains(resp.Headers, marker)) {
+		report(Finding{
+			Severity: Medium, Check: "host-header-injection", Title: "Host Header Injection",
+			Detail:   "An attacker-controlled Host header was reflected into the response (body or a redirect), which can enable password-reset poisoning and cache attacks.",
+			Evidence: "Host: " + marker + " reflected", Source: "active",
+			Key: "host-header-injection|" + t.Host + "|" + req.path,
+		})
+	}
+}
+
+// checkCachePoisoning tests whether an unkeyed header is reflected in a cacheable response.
+func checkCachePoisoning(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	marker := "interlace-cp.example"
+	resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: req.renderHeaders(map[string]string{"X-Forwarded-Host": marker})})
+	mu.Lock()
+	*probes++
+	mu.Unlock()
+	if resp.Error != "" {
+		return
+	}
+	reflected := strings.Contains(resp.Body, marker) || strings.Contains(resp.Headers, marker)
+	cc := strings.ToLower(headerValue(resp.Headers, "cache-control"))
+	cacheable := !strings.Contains(cc, "no-store") && !strings.Contains(cc, "private") && !strings.Contains(cc, "no-cache")
+	if reflected && cacheable {
+		report(Finding{
+			Severity: Medium, Check: "cache-poisoning", Title: "Potential Web Cache Poisoning",
+			Detail:   "An unkeyed request header (X-Forwarded-Host) was reflected in a cacheable response, which can poison the shared cache for other users.",
+			Evidence: "X-Forwarded-Host: " + marker + " reflected in a cacheable response", Source: "active",
+			Key: "cache-poisoning|" + t.Host + "|" + req.path,
 		})
 	}
 }
