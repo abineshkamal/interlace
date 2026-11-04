@@ -1,0 +1,1525 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interlace</title>
+<style>
+  :root{
+    --bg:#0f1117; --bg2:#161922; --bg3:#1d2230; --line:#2a3040;
+    --fg:#e6e9f0; --muted:#8b93a7; --accent:#7c5cff; --accent2:#4dd0e1;
+    --green:#4ade80; --amber:#fbbf24; --red:#f87171; --blue:#60a5fa;
+    --mono:ui-monospace,"Cascadia Code","Consolas",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--fg);font:13px/1.5 var(--sans);display:flex;flex-direction:column;overflow:hidden}
+
+  header{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--line);flex:0 0 auto}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;letter-spacing:.3px}
+  .logo .mark{width:20px;height:20px}
+  nav{display:flex;gap:4px;margin-left:8px}
+  nav button{background:transparent;border:1px solid transparent;color:var(--muted);padding:5px 14px;border-radius:7px;cursor:pointer;font:13px var(--sans);font-weight:600}
+  nav button:hover{color:var(--fg)}
+  nav button.active{background:var(--bg3);color:#fff;border-color:var(--line)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .dot.live{background:var(--green);animation:pulse 2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.5)}70%{box-shadow:0 0 0 6px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+  header .status{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
+  header .spacer{flex:1}
+  input.filter,input.tin,select.tin{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 10px;font:12px var(--sans)}
+  input.filter{width:240px}
+  input.filter:focus,input.tin:focus,select.tin:focus{outline:none;border-color:var(--accent)}
+  button.btn{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 11px;cursor:pointer;font:12px var(--sans);transition:.12s}
+  button.btn:hover{border-color:var(--accent);color:#fff}
+  button.ghost{background:transparent}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  button.primary:hover{filter:brightness(1.1)}
+  .count{color:var(--muted);font-size:12px}
+  .count b{color:var(--fg)}
+
+  .view{flex:1;min-height:0;display:none;flex-direction:column}
+  .view.active{display:flex}
+
+  /* Proxy view */
+  .history{flex:1 1 55%;min-height:80px;overflow:auto}
+  table{width:100%;border-collapse:collapse;font:12px var(--mono)}
+  thead th{position:sticky;top:0;background:var(--bg2);text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);color:var(--muted);font:11px var(--sans);font-weight:600;letter-spacing:.3px;text-transform:uppercase;z-index:1}
+  tbody td{padding:5px 10px;border-bottom:1px solid #1b2030;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:#1a1f2e}
+  tbody tr.sel{background:#242b3d}
+  .col-id{width:52px;color:var(--muted)} .col-time{width:78px;color:var(--muted)}
+  .col-method{width:70px;font-weight:700} .col-status{width:60px;text-align:center}
+  .col-host{width:200px;color:var(--accent2)} .col-type{width:150px;color:var(--muted)}
+  .col-len{width:72px;text-align:right;color:var(--muted)} .col-ms{width:64px;text-align:right;color:var(--muted)}
+  .col-path{max-width:0}
+  .m-GET{color:var(--green)} .m-POST{color:var(--amber)} .m-PUT{color:var(--blue)}
+  .m-DELETE{color:var(--red)} .m-PATCH{color:var(--accent2)} .m-CONNECT,.m-HEAD,.m-OPTIONS{color:var(--muted)}
+  .s2{color:var(--green)} .s3{color:var(--accent2)} .s4{color:var(--amber)} .s5{color:var(--red)} .s0{color:var(--red)}
+
+  .divider{height:6px;background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);cursor:row-resize;flex:0 0 auto}
+  .detail{flex:1 1 45%;min-height:80px;display:flex;overflow:hidden;background:var(--bg)}
+  .pane{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+  .pane:last-child{border-right:none}
+  .pane h3{margin:0;padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .pane h3 .badge{font-weight:600;text-transform:none;letter-spacing:0}
+  .pane h3 .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .pane pre{margin:0;flex:1;overflow:auto;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:#cfd6e4}
+  .hhead{color:var(--accent)} .hname{color:var(--accent2)} .hval{color:#cfd6e4}
+  .empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:20px;font-size:13px}
+  .empty .k{color:var(--fg)}
+  code.kbd{background:var(--bg3);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font:12px var(--mono);color:var(--accent2)}
+
+  /* Repeater view */
+  .rtabs{display:flex;align-items:center;gap:2px;background:var(--bg2);border-bottom:1px solid var(--line);padding:6px 8px;overflow-x:auto;flex:0 0 auto}
+  .rtab{display:flex;align-items:center;gap:8px;padding:5px 12px;border-radius:7px 7px 0 0;background:var(--bg3);border:1px solid var(--line);border-bottom:none;color:var(--muted);cursor:pointer;white-space:nowrap;font:12px var(--mono)}
+  .rtab.active{background:var(--bg);color:#fff}
+  .rtab .x{color:var(--muted);font-family:var(--sans)}
+  .rtab .x:hover{color:var(--red)}
+  .rtab-add{background:transparent;border:1px dashed var(--line);color:var(--muted);border-radius:7px;padding:5px 11px;cursor:pointer}
+  .rbody{flex:1;display:flex;min-height:0}
+  .rside{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+  .rside:last-child{border-right:none}
+  .rbar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border-bottom:1px solid var(--line)}
+  .rbar .tin.host{flex:1}
+  .rlabel{padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:flex;gap:8px;align-items:center}
+  .rlabel .badge{margin-left:auto;font-weight:600;text-transform:none;letter-spacing:0}
+  textarea.req{flex:1;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:12px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto}
+  .rresp{flex:1;overflow:auto;margin:0;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:#cfd6e4}
+  .rempty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+
+  .navbadge{background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font:11px var(--sans);font-weight:700;margin-left:2px}
+
+  /* Target site map */
+  #siteTree details{margin:0}
+  #siteTree summary{padding:5px 8px;cursor:pointer;color:var(--accent2);font:12px var(--mono);border-radius:5px;list-style:none}
+  #siteTree summary::-webkit-details-marker{display:none}
+  #siteTree summary:before{content:"▸ ";color:var(--muted)}
+  #siteTree details[open]>summary:before{content:"▾ "}
+  #siteTree summary:hover{background:#1a1f2e}
+  .treepath{padding:4px 8px 4px 26px;cursor:pointer;font:12px var(--mono);color:#cfd6e4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:5px}
+  .treepath:hover{background:#1a1f2e}
+  .treepath.sel{background:#242b3d}
+  .treepath .cnt{color:var(--muted);margin-left:6px}
+
+  /* Issues view */
+  .issues{flex:1;display:flex;min-height:0}
+  .ilist{width:42%;min-width:300px;overflow:auto;border-right:1px solid var(--line)}
+  .ifind{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-bottom:1px solid #1b2030;cursor:pointer}
+  .ifind:hover{background:#1a1f2e}
+  .ifind.sel{background:#242b3d}
+  .ifind .meta{min-width:0;flex:1}
+  .ifind .title{color:var(--fg);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ifind .sub{color:var(--muted);font:11px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pill{flex:0 0 auto;font:10px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:5px;margin-top:1px}
+  .pill.high{background:rgba(248,113,113,.18);color:var(--red)}
+  .pill.medium{background:rgba(251,191,36,.16);color:var(--amber)}
+  .pill.low{background:rgba(96,165,250,.16);color:var(--blue)}
+  .pill.info{background:rgba(139,147,167,.16);color:var(--muted)}
+  .idetail{flex:1;overflow:auto;padding:0;min-width:0}
+  .idetail .ihead{padding:16px 18px;border-bottom:1px solid var(--line)}
+  .idetail h2{margin:0 0 8px;font-size:17px;display:flex;align-items:center;gap:10px}
+  .idetail .kv{color:var(--muted);font:12px var(--mono);margin:3px 0}
+  .idetail .kv b{color:var(--accent2);font-weight:400}
+  .idetail .body{padding:16px 18px}
+  .idetail .body p{margin:0 0 14px;color:#cfd6e4}
+  .idetail .evid{background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font:12px var(--mono);color:var(--amber);white-space:pre-wrap;word-break:break-word}
+  .idetail .vflow{margin-top:14px}
+  .ihint{padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;gap:14px}
+  .ihint b{color:var(--fg)}
+
+  /* Fuzzer view */
+  .fz{flex:1;display:flex;flex-direction:column;min-height:0}
+  .fz-config{flex:0 0 auto;display:flex;flex-direction:column;border-bottom:1px solid var(--line)}
+  .fz-bar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .fz-bar .host{width:220px}
+  .fz-bar label{color:var(--muted);font-size:12px}
+  .fz-bar .grow{flex:1}
+  .fz-main{display:flex;min-height:150px;max-height:40vh}
+  .fz-tpl{flex:1.4;display:flex;flex-direction:column;border-right:1px solid var(--line);min-width:0}
+  .fz-pl{flex:1;display:flex;flex-direction:column;min-width:0;overflow:auto}
+  .fz-sub{padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .fz-sub .right{margin-left:auto;display:flex;gap:6px}
+  textarea.tpl,textarea.pl{resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:10px 12px;font:12px/1.55 var(--mono);outline:none;white-space:pre;overflow:auto;width:100%}
+  textarea.tpl{flex:1;min-height:120px}
+  .pl-box{display:flex;flex-direction:column;border-bottom:1px solid var(--line)}
+  .pl-box .cap{padding:5px 12px;color:var(--accent2);font:11px var(--mono);background:#141824}
+  textarea.pl{min-height:70px;height:80px}
+  .fz-opts{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#141824;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .fz-opts input.grep{flex:1;min-width:140px}
+  .fz-opts input.num{width:66px}
+  .fz-results{flex:1;overflow:auto;min-height:60px}
+  .fz-results table{width:100%}
+  .fz-results td.pl{color:var(--amber);font-weight:600}
+  .fz-results tr.match{background:rgba(124,92,255,.14)}
+  .fz-results tr.match td.mk{color:var(--accent)}
+  .col-idx{width:50px;color:var(--muted)} .col-mk{width:38px;text-align:center}
+  .fz-progress{color:var(--muted);font-size:12px}
+
+  .setup{position:fixed;inset:0;background:rgba(8,10,15,.78);display:none;align-items:center;justify-content:center;z-index:10}
+  .setup.show{display:flex}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:12px;max-width:560px;padding:22px 24px}
+  .card h2{margin:0 0 6px;font-size:17px}
+  .card ol{margin:10px 0 0;padding-left:20px}
+  .card li{margin:8px 0}
+  .card .close{float:right}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="2.2" stroke-linecap="round">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="24">
+        <stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#4dd0e1"/></linearGradient></defs>
+      <path d="M3 7c6 0 6 10 12 10M3 17c6 0 6-10 12-10M15 7h6M15 17h6"/>
+    </svg>
+    Interlace
+  </div>
+  <nav>
+    <button id="nav-proxy" class="active" data-view="proxy">Proxy</button>
+    <button id="nav-target" data-view="target">Target</button>
+    <button id="nav-repeater" data-view="repeater">Repeater</button>
+    <button id="nav-fuzzer" data-view="fuzzer">Fuzzer</button>
+    <button id="nav-issues" data-view="issues">Issues <span class="navbadge" id="issuesBadge" style="display:none">0</span></button>
+    <button id="nav-oob" data-view="oob">OOB <span class="navbadge" id="oobBadge" style="display:none;background:var(--accent2);color:#06202a">0</span></button>
+    <button id="nav-ws" data-view="ws">WS <span class="navbadge" id="wsBadge" style="display:none;background:var(--blue);color:#06202a">0</span></button>
+    <button id="nav-tools" data-view="tools">Tools</button>
+  </nav>
+  <div class="status"><span class="dot" id="dot"></span><span id="connLbl">connecting…</span></div>
+  <div class="spacer"></div>
+  <button class="btn" id="interceptBtn" title="Pause requests to edit or drop them">Intercept: off</button>
+  <button class="btn" id="interceptRespBtn" title="Pause responses to edit or drop them">Resp: off</button>
+  <span class="count" id="proxyCtl">Flows: <b id="count">0</b></span>
+  <input class="filter" id="filter" placeholder="Filter by host…">
+  <button class="btn ghost" id="scopeBtn">Scope</button>
+  <button class="btn ghost" id="sessionBtn">Session</button>
+  <button class="btn ghost" id="setupBtn">Setup</button>
+  <button class="btn ghost" id="certBtn">Download CA</button>
+  <button class="btn ghost" id="clearBtn">Clear</button>
+</header>
+
+<!-- PROXY VIEW -->
+<section class="view active" id="view-proxy">
+  <div class="history">
+    <table>
+      <thead><tr>
+        <th class="col-id">#</th><th class="col-time">Time</th><th class="col-method">Method</th>
+        <th class="col-status">Status</th><th class="col-host">Host</th><th class="col-path">Path</th>
+        <th class="col-type">Type</th><th class="col-len">Length</th><th class="col-ms">ms</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div class="divider" id="divider"></div>
+  <div class="detail" id="detail">
+    <div class="empty" id="emptyDetail">
+      Select a request above to inspect it.<br><br>
+      <span class="k">Not seeing traffic?</span> Point your browser/tool at the proxy and trust the CA — click <span class="k">Setup</span>.
+    </div>
+  </div>
+</section>
+
+<!-- REPEATER VIEW -->
+<section class="view" id="view-repeater">
+  <div class="rtabs" id="rtabs">
+    <button class="rtab-add" id="rtabAdd">+ New tab</button>
+  </div>
+  <div class="rbody" id="rbody">
+    <div class="rempty" id="rempty">No Repeater tabs. Click <b style="color:var(--fg);margin:0 4px">+ New tab</b> or use <b style="color:var(--fg);margin:0 4px">⇥ Repeater</b> on a captured request.</div>
+  </div>
+</section>
+
+<!-- ISSUES VIEW -->
+<section class="view" id="view-issues">
+  <div class="issues" style="flex-direction:column">
+    <div class="ihint" id="ihint">Passive &amp; active findings. <span id="isummary"></span>
+      <select class="tin" id="sevFilter" style="margin-left:10px"><option value="">all severities</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select>
+      <span style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="scheduleBtn">⏱ Schedule</button>
+        <button class="btn" id="scanAllBtn">⚡ Scan all in-scope</button>
+        <button class="btn" id="reportBtn">HTML report</button>
+        <button class="btn" id="reportJsonBtn" title="Download JSON">JSON</button>
+        <button class="btn" id="reportSarifBtn" title="Download SARIF for CI / GitHub code scanning">SARIF</button>
+      </span>
+    </div>
+    <div class="issues" style="flex:1;min-height:0">
+      <div class="ilist" id="ilist">
+        <div class="empty" style="padding:30px">No findings yet. Route traffic through the proxy — issues appear here automatically.</div>
+      </div>
+      <div class="idetail" id="idetail">
+        <div class="empty">Select a finding to see details.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TARGET (site map) VIEW -->
+<section class="view" id="view-target">
+  <div class="issues" style="flex:1;min-height:0">
+    <div style="width:38%;display:flex;flex-direction:column;border-right:1px solid var(--line)">
+      <div style="padding:7px 10px;border-bottom:1px solid var(--line);background:var(--bg2)">
+        <label style="color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px"><input type="checkbox" id="targetScopeOnly"> in-scope hosts only</label>
+      </div>
+      <div class="ilist" id="siteTree" style="flex:1;padding:8px 4px;border-right:none">
+        <div class="empty" style="padding:30px">No traffic yet. Browse through the proxy to build the site map.</div>
+      </div>
+    </div>
+    <div class="idetail" id="targetDetail"><div class="empty">Select a path to see its requests.</div></div>
+  </div>
+</section>
+
+<!-- OOB VIEW -->
+<section class="view" id="view-oob">
+  <div class="ihint">Out-of-band interaction server — detects blind vulnerabilities (SSRF, XXE, blind RCE) when a target calls back.</div>
+  <div style="padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <span style="color:var(--muted);font-size:12px">Callback URL base:</span>
+    <code class="kbd" id="oobBase" style="font-size:13px">—</code>
+    <button class="btn" id="oobCopy">Copy a payload URL</button>
+    <span style="color:var(--muted);font-size:12px">Active scans use this automatically for blind checks.</span>
+  </div>
+  <div class="fz-results" style="flex:1">
+    <table>
+      <thead><tr><th class="col-time">Time</th><th class="col-method">Method</th><th>Path</th><th class="col-host">Token</th><th>Remote</th></tr></thead>
+      <tbody id="oobRows"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- WEBSOCKET VIEW -->
+<section class="view" id="view-ws">
+  <div class="ihint">WebSocket messages observed through the proxy. <span style="color:var(--green)">send</span> = client→server, <span style="color:var(--accent2)">recv</span> = server→client.
+    <span style="margin-left:auto"><button class="btn" id="wsInterceptBtn">Intercept WS: off</button></span></div>
+  <div style="display:flex;gap:6px;align-items:center;padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--line);flex-wrap:wrap">
+    <span style="color:var(--muted);font-size:12px">WS Repeater:</span>
+    <select class="tin" id="wsrScheme"><option value="ws">ws</option><option value="wss">wss</option></select>
+    <input class="tin" id="wsrHost" placeholder="host:port" style="width:150px">
+    <input class="tin" id="wsrPath" placeholder="/ws" style="width:90px" value="/ws">
+    <input class="tin" id="wsrMsg" placeholder="message to send" style="flex:1;min-width:140px">
+    <button class="btn primary" id="wsrSend">Send ▶</button>
+    <span id="wsrReply" style="color:var(--accent2);font:12px var(--mono)"></span>
+  </div>
+  <div class="fz-results" style="flex:1">
+    <table>
+      <thead><tr><th class="col-time">Time</th><th class="col-method">Dir</th><th class="col-status">Type</th><th class="col-host">Host</th><th>Payload</th></tr></thead>
+      <tbody id="wsRows"></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- TOOLS VIEW (Decoder + Comparer) -->
+<section class="view" id="view-tools">
+  <div class="rtabs">
+    <button class="rtab active" id="tool-decoder-tab">Decoder</button>
+    <button class="rtab" id="tool-comparer-tab">Comparer</button>
+    <button class="rtab" id="tool-mr-tab">Match &amp; Replace</button>
+    <button class="rtab" id="tool-jwt-tab">JWT</button>
+  </div>
+  <!-- Decoder -->
+  <div id="tool-decoder" class="rbody" style="flex-direction:column;padding:14px 16px;gap:10px;overflow:auto">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select class="tin" id="decOp">
+        <optgroup label="Decode"><option value="b64d">Base64 decode</option><option value="urld">URL decode</option><option value="htmld">HTML decode</option><option value="hexd">Hex decode</option></optgroup>
+        <optgroup label="Encode"><option value="b64e">Base64 encode</option><option value="urle">URL encode</option><option value="htmle">HTML encode</option><option value="hexe">Hex encode</option></optgroup>
+        <optgroup label="Hash / other"><option value="jwt">JWT decode</option></optgroup>
+      </select>
+      <button class="btn primary" id="decRun">Apply ▼</button>
+      <button class="btn" id="decSwap">Result → Input</button>
+      <button class="btn" id="decClear">Clear</button>
+    </div>
+    <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px">Input</div>
+    <textarea id="decIn" class="req" spellcheck="false" style="min-height:140px;border:1px solid var(--line);border-radius:6px"></textarea>
+    <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px">Output</div>
+    <textarea id="decOut" class="req" spellcheck="false" style="min-height:140px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)"></textarea>
+  </div>
+  <!-- Comparer -->
+  <div id="tool-comparer" class="rbody" style="display:none;flex-direction:column;padding:14px 16px;gap:10px;overflow:auto">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn primary" id="cmpRun">Compare ⇄</button>
+      <span id="cmpResult" style="color:var(--muted);font-size:12px"></span>
+    </div>
+    <div style="display:flex;gap:10px;flex:1;min-height:200px">
+      <textarea id="cmpA" class="req" spellcheck="false" placeholder="A" style="flex:1;border:1px solid var(--line);border-radius:6px"></textarea>
+      <textarea id="cmpB" class="req" spellcheck="false" placeholder="B" style="flex:1;border:1px solid var(--line);border-radius:6px"></textarea>
+    </div>
+    <div id="cmpDiff" style="flex:1;overflow:auto;font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word;border:1px solid var(--line);border-radius:6px;padding:10px;background:var(--bg2);min-height:120px"></div>
+  </div>
+  <!-- Match & Replace -->
+  <div id="tool-mr" class="rbody" style="display:none;flex-direction:column;padding:14px 16px;gap:10px;overflow:auto">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" id="mrAdd">+ Add rule</button>
+      <button class="btn primary" id="mrSave">Save rules</button>
+      <span style="color:var(--muted);font-size:12px">Rules rewrite proxied traffic automatically. Match is a regex; $1 backrefs in Replace. Empty match on a header part appends the Replace line.</span>
+    </div>
+    <table style="width:100%;font:12px var(--mono)">
+      <thead><tr style="color:var(--muted);text-align:left">
+        <th style="width:40px;padding:6px">On</th><th style="width:120px;padding:6px">Name</th>
+        <th style="width:130px;padding:6px">Part</th><th style="padding:6px">Match (regex)</th>
+        <th style="padding:6px">Replace</th><th style="width:110px;padding:6px">Host filter</th><th style="width:40px"></th>
+      </tr></thead>
+      <tbody id="mrRows"></tbody>
+    </table>
+  </div>
+  <!-- JWT editor / attacker -->
+  <div id="tool-jwt" class="rbody" style="display:none;flex-direction:column;padding:14px 16px;gap:10px;overflow:auto">
+    <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px">JWT</div>
+    <textarea id="jwtIn" class="req" spellcheck="false" style="min-height:70px;border:1px solid var(--line);border-radius:6px" placeholder="paste a JWT (eyJ...)"></textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn primary" id="jwtDecode">Decode</button>
+      <button class="btn" id="jwtNone">Forge alg:none</button>
+      <span style="color:var(--muted)">HS256 secret:</span>
+      <input class="tin" id="jwtSecret" placeholder="secret" style="width:150px">
+      <button class="btn" id="jwtResign">Re-sign (HS256)</button>
+      <button class="btn" id="jwtCrack">Crack secret</button>
+    </div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><div style="color:var(--accent2);font-size:11px;margin-bottom:4px">HEADER</div>
+        <textarea id="jwtHeader" class="req" spellcheck="false" style="min-height:90px;border:1px solid var(--line);border-radius:6px"></textarea></div>
+      <div style="flex:1"><div style="color:var(--accent2);font-size:11px;margin-bottom:4px">PAYLOAD</div>
+        <textarea id="jwtPayload" class="req" spellcheck="false" style="min-height:90px;border:1px solid var(--line);border-radius:6px"></textarea></div>
+    </div>
+    <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px">Output token</div>
+    <textarea id="jwtOut" class="req" spellcheck="false" style="min-height:70px;border:1px solid var(--line);border-radius:6px;background:var(--bg2)"></textarea>
+    <div id="jwtMsg" style="font:12px var(--mono)"></div>
+  </div>
+</section>
+
+<!-- FUZZER VIEW -->
+<section class="view" id="view-fuzzer">
+  <div class="fz">
+    <div class="fz-config">
+      <div class="fz-bar">
+        <select class="tin" id="fzScheme"><option value="https">https</option><option value="http">http</option></select>
+        <input class="tin host" id="fzHost" placeholder="host:port">
+        <label>Attack</label>
+        <select class="tin" id="fzAttack">
+          <option value="sniper">Sniper</option>
+          <option value="pitchfork">Pitchfork</option>
+          <option value="clusterbomb">Cluster bomb</option>
+        </select>
+        <button class="btn" id="fzWrap" title="Wrap the selected text in § position markers">Add § position</button>
+        <div class="grow"></div>
+        <span class="fz-progress" id="fzProgress"></span>
+        <button class="btn primary" id="fzStart">Start ▶</button>
+        <button class="btn" id="fzStop" disabled>Stop ■</button>
+      </div>
+      <div class="fz-main">
+        <div class="fz-tpl">
+          <div class="fz-sub">Request template <span style="color:var(--muted);text-transform:none;font-weight:400;letter-spacing:0">— wrap each injection point in § §</span></div>
+          <textarea class="tpl" id="fzTpl" spellcheck="false">GET /get?q=§test§ HTTP/1.1
+Host: httpbin.org
+
+</textarea>
+        </div>
+        <div class="fz-pl">
+          <div class="fz-sub">Payloads <span class="right"><span id="fzPosCount" style="color:var(--accent2);text-transform:none;letter-spacing:0">1 position</span></span></div>
+          <div id="fzPayloads"></div>
+          <div class="fz-opts">
+            <label>Grep</label><input class="tin grep" id="fzGrep" placeholder="flag responses containing…">
+            <label>Extract</label><input class="tin" id="fzExtract" placeholder="regex to extract" style="width:120px">
+            <label>Process</label><select class="tin" id="fzProcess"><option value="">none</option><option value="b64">base64</option><option value="url">url-encode</option><option value="upper">UPPER</option><option value="lower">lower</option><option value="sha256">sha256</option></select>
+            <label>Threads</label><input class="tin num" id="fzConc" type="number" value="10" min="1" max="100">
+            <label>Delay ms</label><input class="tin num" id="fzDelay" type="number" value="0" min="0">
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="fz-results">
+      <table>
+        <thead><tr>
+          <th class="col-idx">#</th><th class="col-mk">✓</th><th>Payloads</th>
+          <th class="col-status">Status</th><th class="col-len">Length</th><th class="col-ms">ms</th><th>Extracted</th><th>Error</th>
+        </tr></thead>
+        <tbody id="fzRows"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<div class="setup" id="scheduleModal">
+  <div class="card" style="max-width:460px">
+    <button class="btn ghost close" id="scheduleClose">✕</button>
+    <h2>Scheduled scanning</h2>
+    <p style="color:var(--muted);margin:2px 0 14px;font-size:12px">Automatically run an active scan of all in-scope endpoints on a repeating interval.</p>
+    <label style="display:flex;align-items:center;gap:8px;margin:10px 0"><input type="checkbox" id="schedEnabled"> Enable scheduled scans</label>
+    <label style="display:flex;align-items:center;gap:8px;margin:10px 0">Every <input class="tin" id="schedInterval" type="number" min="5" value="60" style="width:80px"> minutes</label>
+    <div id="schedStatus" style="color:var(--muted);font:12px var(--mono);margin:10px 0"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
+      <button class="btn" id="scheduleCancel">Cancel</button><button class="btn primary" id="scheduleSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="setup" id="sessionModal">
+  <div class="card">
+    <button class="btn ghost close" id="sessionClose">✕</button>
+    <h2>Session headers</h2>
+    <p style="color:var(--muted);margin:2px 0 12px;font-size:12px">Added to every Repeater, active-scan and crawl request — for authenticated testing (e.g. a <code class="kbd">Cookie</code> or <code class="kbd">Authorization</code> header).</p>
+    <table style="width:100%;font:12px var(--mono)"><tbody id="sessRows"></tbody></table>
+    <div style="display:flex;justify-content:space-between;gap:8px;margin-top:14px">
+      <button class="btn" id="sessAdd">+ Add header</button>
+      <span style="display:flex;gap:8px"><button class="btn" id="sessCancel">Cancel</button><button class="btn primary" id="sessSave">Save session</button></span>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Login macro</h2>
+    <p style="color:var(--muted);margin:2px 0 10px;font-size:12px">Build a login sequence with the <b>+ Macro</b> button on captured requests, then replay it here to capture session cookies automatically.</p>
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="btn primary" id="macroReplay">Run login macro</button>
+      <span id="macroStatus" style="color:var(--muted);font:12px var(--mono)"></span>
+    </div>
+  </div>
+</div>
+
+<div class="setup" id="scopeModal">
+  <div class="card">
+    <button class="btn ghost close" id="scopeClose">✕</button>
+    <h2>Scope</h2>
+    <p style="color:var(--muted);margin:2px 0 12px;font-size:12px">Active scanning only fires at in-scope hosts. One host per line. Use <code class="kbd">*.example.com</code> for subdomains.</p>
+    <div style="display:flex;gap:14px">
+      <div style="flex:1"><div style="color:var(--accent2);font-size:12px;margin-bottom:5px">Include</div>
+        <textarea id="scopeInc" spellcheck="false" style="width:100%;height:120px;background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:8px;font:12px var(--mono);resize:vertical" placeholder="example.com&#10;*.example.com"></textarea></div>
+      <div style="flex:1"><div style="color:var(--muted);font-size:12px;margin-bottom:5px">Exclude</div>
+        <textarea id="scopeExc" spellcheck="false" style="width:100%;height:120px;background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:8px;font:12px var(--mono);resize:vertical" placeholder="logout.example.com"></textarea></div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn" id="scopeCancel">Cancel</button>
+      <button class="btn primary" id="scopeSave">Save scope</button>
+    </div>
+  </div>
+</div>
+
+<div class="setup" id="setup">
+  <div class="card">
+    <button class="btn ghost close" id="setupClose">✕</button>
+    <h2>Route traffic through Interlace</h2>
+    <ol>
+      <li>Set your browser/tool HTTP &amp; HTTPS proxy to <code class="kbd" id="proxyAddr">127.0.0.1:8080</code></li>
+      <li>Click <b>Download CA</b> and install <code class="kbd">interlace-root-ca.pem</code> into your trust store (Trusted Root Certification Authorities).</li>
+      <li>Browse an <b>authorized</b> target — requests appear live.</li>
+    </ol>
+    <p style="color:var(--muted);margin:14px 0 0;font-size:12px">Interlace is for testing systems you own or are permitted to test.</p>
+  </div>
+</div>
+
+<div id="toast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);display:none;z-index:20;padding:10px 16px;border-radius:8px;background:var(--bg3);border:1px solid var(--line);color:var(--fg);font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.4)"></div>
+
+<!-- WS Intercept panel -->
+<div id="wsInterceptPanel" style="position:fixed;inset:0;background:rgba(8,10,15,.6);display:none;align-items:center;justify-content:center;z-index:15">
+  <div style="background:var(--bg2);border:1px solid var(--blue);border-radius:12px;width:min(680px,94vw);display:flex;flex-direction:column">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <span style="font-weight:700">WebSocket message intercepted</span>
+      <span id="wsInterceptMeta" style="color:var(--muted);font:12px var(--mono)"></span>
+      <span id="wsInterceptQueue" style="margin-left:auto;color:var(--muted);font-size:12px"></span>
+    </div>
+    <textarea id="wsInterceptPayload" spellcheck="false" style="min-height:180px;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:14px;font:12px/1.6 var(--mono);outline:none;white-space:pre-wrap;overflow:auto"></textarea>
+    <div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="wsInterceptDrop">Drop</button>
+      <button class="btn primary" id="wsInterceptForward">Forward ▶</button>
+    </div>
+  </div>
+</div>
+
+<!-- Intercept panel -->
+<div id="interceptPanel" style="position:fixed;inset:0;background:rgba(8,10,15,.6);display:none;align-items:center;justify-content:center;z-index:15">
+  <div style="background:var(--bg2);border:1px solid var(--accent);border-radius:12px;width:min(820px,94vw);max-height:88vh;display:flex;flex-direction:column">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px">
+      <span style="font-weight:700" id="interceptTitle">Request intercepted</span>
+      <span id="interceptMeta" style="color:var(--muted);font:12px var(--mono)"></span>
+      <span id="interceptQueue" style="margin-left:auto;color:var(--muted);font-size:12px"></span>
+    </div>
+    <textarea id="interceptRaw" spellcheck="false" style="flex:1;min-height:300px;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:14px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto"></textarea>
+    <div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="interceptDrop">Drop</button>
+      <button class="btn primary" id="interceptForward">Forward ▶</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let toastTimer=null;
+function toast(msg, kind){
+  const t=$('#toast'); t.textContent=msg; t.style.display='block';
+  t.style.borderColor = kind==='bad'?'var(--red)':kind==='warn'?'var(--amber)':kind==='ok'?'var(--green)':'var(--line)';
+  clearTimeout(toastTimer); toastTimer=setTimeout(()=>{t.style.display='none';}, 4000);
+}
+const rowsEl = $('#rows'), countEl = $('#count'), dot = $('#dot'), connLbl = $('#connLbl');
+let filterText = '';
+
+function methodClass(m){ return 'm-' + (m||'').toUpperCase(); }
+function statusClass(s){ if(!s) return 's0'; return 's' + String(s)[0]; }
+function esc(x){ return (x==null?'':String(x)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+/* ---------- view switching ---------- */
+document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
+  const v=b.dataset.view;
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
+  document.querySelectorAll('.view').forEach(sec=>sec.classList.toggle('active', sec.id==='view-'+v));
+  $('#proxyCtl').style.display = v==='proxy'?'':'none';
+  $('#filter').style.display = v==='proxy'?'':'none';
+}));
+
+/* ---------- proxy history ---------- */
+function rowHTML(f){
+  return `<tr data-id="${f.id}">
+    <td class="col-id">${f.id}</td><td class="col-time">${esc(f.time)}</td>
+    <td class="col-method ${methodClass(f.method)}">${esc(f.method)}</td>
+    <td class="col-status ${statusClass(f.status)}">${f.error?'ERR':(f.status||'')}</td>
+    <td class="col-host">${esc(f.host)}</td>
+    <td class="col-path" title="${esc(f.path)}">${esc(f.path)}</td>
+    <td class="col-type">${esc((f.contentType||'').split(';')[0])}</td>
+    <td class="col-len">${f.length||0}</td><td class="col-ms">${f.durationMs||0}</td></tr>`;
+}
+function matches(f){ return !filterText || (f.host||'').toLowerCase().includes(filterText); }
+function addRow(f, prepend){
+  if(!matches(f)) return;
+  const tmp=document.createElement('tbody'); tmp.innerHTML=rowHTML(f);
+  const tr=tmp.firstElementChild;
+  tr.addEventListener('click', ()=>select(f.id, tr));
+  if(prepend) rowsEl.prepend(tr); else rowsEl.append(tr);
+}
+async function loadInitial(){
+  const flows=await (await fetch('/flows?limit=500')).json();
+  rowsEl.innerHTML=''; (flows||[]).forEach(f=>addRow(f,false));
+}
+
+function decodeBody(b64){
+  if(!b64) return {text:'',binary:false,len:0};
+  try{
+    const bin=atob(b64); const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i);
+    let np=0; for(let i=0;i<Math.min(bytes.length,2048);i++){const c=bytes[i]; if(c===9||c===10||c===13)continue; if(c<32||c===0)np++;}
+    const binary=np>8;
+    return {text: binary?'':new TextDecoder('utf-8',{fatal:false}).decode(bytes), binary, len:bytes.length};
+  }catch(e){ return {text:'(decode error)',binary:false,len:0}; }
+}
+function headersBlock(h){
+  if(!h) return '';
+  return Object.keys(h).sort().map(n=>h[n].map(v=>`<span class="hname">${esc(n)}</span>: <span class="hval">${esc(v)}</span>`).join('\n')).join('\n');
+}
+function requestView(f){
+  const line=`<span class="hhead">${esc(f.method)} ${esc(f.path)} HTTP/1.1</span>`;
+  const host=`<span class="hname">Host</span>: <span class="hval">${esc(f.host)}</span>`;
+  const b=decodeBody(f.reqBody);
+  const body=b.binary?`\n\n[binary body, ${b.len} bytes]`:(b.text?'\n\n'+esc(b.text):'');
+  return line+'\n'+host+(headersBlock(f.reqHeaders)?'\n'+headersBlock(f.reqHeaders):'')+body;
+}
+function responseView(f){
+  if(f.error) return `<span class="s5">Upstream error:</span> ${esc(f.error)}`;
+  const line=`<span class="hhead">HTTP/1.1 ${esc(f.statusCode)}</span>`;
+  const b=decodeBody(f.respBody);
+  const body=b.binary?`\n\n[binary body, ${b.len} bytes]`:(b.text?'\n\n'+esc(b.text):'');
+  return line+(headersBlock(f.respHeaders)?'\n'+headersBlock(f.respHeaders):'')+body;
+}
+// Build a raw HTTP request string from a captured flow (for Repeater).
+function flowToRaw(f){
+  let lines=[`${f.method} ${f.path} HTTP/1.1`, `Host: ${f.host}`];
+  if(f.reqHeaders){ Object.keys(f.reqHeaders).sort().forEach(n=>{
+    if(n.toLowerCase()==='host') return;
+    f.reqHeaders[n].forEach(v=>lines.push(`${n}: ${v}`));
+  }); }
+  const b=decodeBody(f.reqBody);
+  return lines.join('\r\n')+'\r\n\r\n'+(b.binary?'':b.text);
+}
+async function select(id, tr){
+  document.querySelectorAll('tbody tr.sel').forEach(x=>x.classList.remove('sel'));
+  if(tr) tr.classList.add('sel');
+  const f=await (await fetch('/flow?id='+id)).json();
+  window._lastFlow=f;
+  $('#detail').innerHTML=`
+    <div class="pane"><h3>Request <span class="badge">${esc(f.method)} ${esc(f.scheme)}://${esc(f.host)}</span>
+      <span class="right"><button class="btn" id="toCurl" title="Copy as curl">curl</button><button class="btn" id="toMacro" title="Add to login macro">+ Macro</button><button class="btn" id="toParams" title="Discover hidden parameters">Params</button><button class="btn" id="toDiscover" title="Content discovery on this host">Discover</button><button class="btn" id="toCrawl">🕸 Crawl</button><button class="btn" id="toScan">⚡ Scan</button><button class="btn" id="toFuzz">⇥ Fuzzer</button><button class="btn primary" id="toRep">⇥ Repeater</button></span></h3>
+      <pre>${requestView(f)}</pre></div>
+    <div class="pane"><h3>Response <span class="badge ${statusClass(f.statusCode)}">${f.error?'error':esc(f.statusCode)}</span></h3>
+      <pre>${responseView(f)}</pre></div>`;
+  $('#toRep').addEventListener('click', ()=>{
+    const port = f.scheme==='https'?443:80;
+    const host = f.host.includes(':')?f.host:`${f.host}:${port}`;
+    addRepeaterTab(f.host, f.scheme, host, flowToRaw(f));
+  });
+  $('#toFuzz').addEventListener('click', ()=>sendToFuzzer(f));
+  $('#toScan').addEventListener('click', ()=>activeScan(f));
+  $('#toCrawl').addEventListener('click', ()=>crawlSite(f));
+  $('#toCurl').addEventListener('click', ()=>copyAsCurl(f));
+  $('#toMacro').addEventListener('click', ()=>addToMacro(f));
+  $('#toDiscover').addEventListener('click', ()=>runStream('/discover',{flowId:f.id},'#toDiscover','Discover',r=>r.found!==undefined?`${r.found} path(s) found — see Proxy/Target`:null,'Discovering…'));
+  $('#toParams').addEventListener('click', ()=>runParamMine(f));
+}
+
+/* ---------- Repeater ---------- */
+let repTabs=[], repActive=null, repSeq=0;
+
+function addRepeaterTab(name, scheme, host, raw){
+  const id='rt'+(++repSeq);
+  repTabs.push({id, name:name||'tab '+repSeq, scheme:scheme||'https', host:host||'', raw:raw||'GET / HTTP/1.1\r\nHost: \r\n\r\n', resp:null, sending:false});
+  repActive=id;
+  // switch to repeater view
+  $('#nav-repeater').click();
+  renderRepeater();
+}
+function closeRepeaterTab(id){
+  const i=repTabs.findIndex(t=>t.id===id);
+  if(i<0) return;
+  repTabs.splice(i,1);
+  if(repActive===id) repActive = repTabs.length?repTabs[Math.max(0,i-1)].id:null;
+  renderRepeater();
+}
+function saveActiveEditor(){
+  const t=repTabs.find(t=>t.id===repActive); if(!t) return;
+  const ta=$('#repReq'); if(ta) t.raw=ta.value;
+  const hi=$('#repHost'); if(hi) t.host=hi.value;
+  const sc=$('#repScheme'); if(sc) t.scheme=sc.value;
+}
+function renderRepeater(){
+  // tab bar
+  const bar=$('#rtabs'); bar.querySelectorAll('.rtab').forEach(x=>x.remove());
+  const add=$('#rtabAdd');
+  repTabs.forEach(t=>{
+    const el=document.createElement('div');
+    el.className='rtab'+(t.id===repActive?' active':'');
+    el.innerHTML=`<span>${esc(t.name)}</span><span class="x" data-x="${t.id}">✕</span>`;
+    el.addEventListener('click',e=>{ if(e.target.dataset.x) return; saveActiveEditor(); repActive=t.id; renderRepeater(); });
+    el.querySelector('.x').addEventListener('click',()=>{ saveActiveEditor(); closeRepeaterTab(t.id); });
+    bar.insertBefore(el, add);
+  });
+  // body
+  const body=$('#rbody');
+  const t=repTabs.find(t=>t.id===repActive);
+  if(!t){ body.innerHTML=`<div class="rempty" id="rempty">No Repeater tabs. Click <b style="color:var(--fg);margin:0 4px">+ New tab</b> or use <b style="color:var(--fg);margin:0 4px">⇥ Repeater</b> on a captured request.</div>`; return; }
+  body.innerHTML=`
+    <div class="rside">
+      <div class="rbar">
+        <select class="tin" id="repScheme"><option value="https">https</option><option value="http">http</option></select>
+        <input class="tin host" id="repHost" placeholder="host:port" value="${esc(t.host)}">
+        <button class="btn primary" id="repSend">Send ▶</button>
+      </div>
+      <textarea class="req" id="repReq" spellcheck="false">${esc(t.raw)}</textarea>
+    </div>
+    <div class="rside">
+      <div class="rlabel">Response ${t.resp?`<span class="badge ${t.resp.error?'s5':statusClass(t.resp.status)}">${t.resp.error?'error':(t.resp.status+' · '+t.resp.bodyLen+' bytes · '+t.resp.durationMs+' ms')}</span>`:''}
+        ${t.prevResp&&t.resp&&!t.resp.error?`<button class="btn" id="repDiff" style="margin-left:auto">⇄ Diff vs previous</button>`:''}</div>
+      ${t.resp?`<pre class="rresp">${renderRepResp(t.resp)}</pre>`:`<div class="rempty">Send the request to see the response.</div>`}
+    </div>`;
+  $('#repScheme').value=t.scheme;
+  $('#repSend').addEventListener('click', sendRepeater);
+  const rd=$('#repDiff');
+  if(rd) rd.addEventListener('click', ()=>{
+    $('#nav-tools').click(); toolTab('comparer');
+    $('#cmpA').value=(t.prevResp&&t.prevResp.body)||''; $('#cmpB').value=(t.resp&&t.resp.body)||'';
+    $('#cmpRun').click();
+  });
+  // Ctrl+Enter to send
+  $('#repReq').addEventListener('keydown', e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){ e.preventDefault(); sendRepeater(); }});
+}
+function renderRepResp(r){
+  if(r.error) return `<span class="s5">Error:</span> ${esc(r.error)}`;
+  const status=`<span class="hhead">${esc(r.proto||'HTTP/1.1')} ${esc(r.status)} ${esc(r.statusText||'')}</span>`;
+  const headers=(r.headers||'').trimEnd().split('\n').map(l=>{
+    const i=l.indexOf(':'); if(i<0) return esc(l);
+    return `<span class="hname">${esc(l.slice(0,i))}</span>:${esc(l.slice(i+1))}`;
+  }).join('\n');
+  const body=r.binary?`\n\n[binary body, ${r.bodyLen} bytes]`:(r.body?'\n\n'+esc(r.body):'');
+  return status+'\n'+headers+body;
+}
+async function sendRepeater(){
+  saveActiveEditor();
+  const t=repTabs.find(t=>t.id===repActive); if(!t) return;
+  const btn=$('#repSend'); if(btn){ btn.textContent='Sending…'; btn.disabled=true; }
+  try{
+    const r=await fetch('/repeater',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({scheme:t.scheme, host:t.host, raw:t.raw})});
+    t.prevResp=t.resp; t.resp=await r.json();
+  }catch(e){ t.resp={error:String(e)}; }
+  renderRepeater();
+}
+$('#rtabAdd').addEventListener('click', ()=>{ saveActiveEditor(); addRepeaterTab('tab '+(repSeq+1),'https','','GET / HTTP/1.1\r\nHost: \r\n\r\n'); });
+
+/* ---------- Issues (passive scanner) ---------- */
+let findings=[], findSel=null;
+const sevRank={high:0,medium:1,low:2,info:3};
+
+function renderIssueSummary(){
+  const c={high:0,medium:0,low:0,info:0};
+  findings.forEach(f=>{ c[f.severity]=(c[f.severity]||0)+1; });
+  $('#isummary').innerHTML = findings.length
+    ? `<b>${c.high}</b> high · <b>${c.medium}</b> medium · <b>${c.low}</b> low · <b>${c.info}</b> info`
+    : '';
+  const badge=$('#issuesBadge');
+  if(findings.length){ badge.style.display=''; badge.textContent=findings.length;
+    badge.style.background = c.high? 'var(--red)' : c.medium? 'var(--amber)' : 'var(--blue)'; }
+  else badge.style.display='none';
+}
+function ifindHTML(f){
+  return `<div class="ifind" data-id="${f.id}">
+    <span class="pill ${f.severity}">${f.severity}</span>
+    <div class="meta"><div class="title">${esc(f.title)}</div>
+      <div class="sub">${esc(f.host)} · ${f.source==='active'?'active':'passive'}</div></div></div>`;
+}
+let sevFilterVal='';
+function renderIssueList(){
+  const el=$('#ilist');
+  if(!findings.length){ el.innerHTML=`<div class="empty" style="padding:30px">No findings yet. Route traffic through the proxy — issues appear here automatically.</div>`; return; }
+  el.innerHTML='';
+  const shown=findings.filter(f=>!sevFilterVal||f.severity===sevFilterVal);
+  if(!shown.length){ el.innerHTML='<div class="empty" style="padding:30px">No '+sevFilterVal+' findings.</div>'; return; }
+  shown.forEach(f=>{
+    const t=document.createElement('template'); t.innerHTML=ifindHTML(f).trim();
+    const node=t.content.firstElementChild;
+    node.addEventListener('click',()=>showFinding(f.id,node));
+    el.appendChild(node);
+  });
+}
+function showFinding(id, node){
+  document.querySelectorAll('.ifind.sel').forEach(x=>x.classList.remove('sel'));
+  if(node) node.classList.add('sel');
+  const f=findings.find(x=>x.id===id); if(!f) return; findSel=id;
+  $('#idetail').innerHTML=`
+    <div class="ihead">
+      <h2><span class="pill ${f.severity}">${f.severity}</span> ${esc(f.title)}</h2>
+      <div class="kv">host: <b>${esc(f.host)}</b></div>
+      <div class="kv">url: <b>${esc(f.url||'')}</b></div>
+      <div class="kv">check: <b>${esc(f.check)}</b> · source: <b>${esc(f.source||'passive')}</b></div>
+    </div>
+    <div class="body">
+      <p>${esc(f.detail)}</p>
+      ${f.evidence?`<div class="evid">${esc(f.evidence)}</div>`:''}
+      ${f.flowId?`<div class="vflow"><button class="btn" id="viewFlow">View request #${f.flowId}</button></div>`:''}
+    </div>`;
+  const vf=$('#viewFlow');
+  if(vf) vf.addEventListener('click', ()=>{ $('#nav-proxy').click();
+    fetch('/flow?id='+f.flowId).then(r=>r.ok?select(f.flowId,null):null); });
+}
+async function loadFindings(){
+  try{ findings=await (await fetch('/findings')).json()||[]; }catch(e){ findings=[]; }
+  renderIssueList(); renderIssueSummary();
+}
+function addFinding(f){
+  findings.push(f);
+  findings.sort((a,b)=> (sevRank[a.severity]-sevRank[b.severity]) || (b.id-a.id));
+  renderIssueList(); renderIssueSummary();
+}
+function connectFindings(){
+  const es=new EventSource('/findings/events');
+  es.onmessage=ev=>{ try{ addFinding(JSON.parse(ev.data)); }catch(e){} };
+}
+
+// Active scan a captured flow (findings stream into Issues via SSE).
+async function activeScan(f){
+  const btn=$('#toScan'); if(btn){ btn.textContent='Scanning…'; btn.disabled=true; }
+  toast('Active scan started on '+f.host+'…','');
+  let probes=0, found=0, error=null;
+  try{
+    const res=await fetch('/scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flowId:f.id})});
+    const reader=res.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {done,value}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1); if(!line) continue;
+        let o; try{o=JSON.parse(line);}catch(e){continue;}
+        if(o.done){ probes=o.probes||0; error=o.error||null; } else { found++; } } }
+  }catch(e){ error=String(e); }
+  if(btn){ btn.textContent='⚡ Scan'; btn.disabled=false; }
+  if(error && /not in scope/.test(error)){ toast('Host not in scope — add it to scan.','warn'); openScope(); return; }
+  if(error){ toast('Scan: '+error,'warn'); return; }
+  toast(`Scan complete — ${probes} probes, ${found} finding(s)`, found?'bad':'ok');
+  if(found) $('#nav-issues').click();
+}
+
+// Crawl a site starting from a flow's URL (feeds Proxy history + passive scan).
+async function crawlSite(f){
+  const btn=$('#toCrawl'); if(btn){ btn.textContent='Crawling…'; btn.disabled=true; }
+  toast('Crawling '+f.host+'…','');
+  let pages=0, error=null;
+  try{
+    const res=await fetch('/crawl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flowId:f.id,maxPages:100})});
+    const reader=res.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {done,value}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1); if(!line) continue;
+        let o; try{o=JSON.parse(line);}catch(e){continue;}
+        if(o.done){ pages=o.pages||0; error=o.error||null; } }
+    }
+  }catch(e){ error=String(e); }
+  if(btn){ btn.textContent='🕸 Crawl'; btn.disabled=false; }
+  if(error && /not in scope/.test(error)){ toast('Host not in scope — add it to crawl.','warn'); openScope(); return; }
+  if(error){ toast('Crawl: '+error,'warn'); return; }
+  toast(`Crawl complete — ${pages} page(s) added to history`,'ok');
+  $('#nav-proxy').click();
+}
+
+// Generic NDJSON-streaming action runner for a button; returns summary via doneFn.
+async function runStream(url, body, btnSel, label, doneFn, busyLabel){
+  const btn=$(btnSel); if(btn){ btn.disabled=true; btn.textContent=busyLabel; }
+  let summary=null, error=null;
+  try{
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const reader=res.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {done,value}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1); if(!line) continue;
+        let o; try{o=JSON.parse(line);}catch(e){continue;}
+        if(o.error){ error=o.error; } else if(o.done){ summary=doneFn(o); } }
+    }
+  }catch(e){ error=String(e); }
+  if(btn){ btn.disabled=false; btn.textContent=label; }
+  if(error && /scope/.test(error)){ toast('Host not in scope.','warn'); openScope(); return; }
+  if(error){ toast(error,'warn'); return; }
+  toast(summary||'Done','ok');
+}
+async function runParamMine(f){
+  const btn=$('#toParams'); btn.disabled=true; btn.textContent='Mining…';
+  const found=[]; let error=null;
+  try{
+    const res=await fetch('/parammine',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({flowId:f.id})});
+    const reader=res.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {done,value}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1); if(!line) continue;
+        let o; try{o=JSON.parse(line);}catch(e){continue;}
+        if(o.error) error=o.error; else if(o.param) found.push(o.param+' ('+o.evidence+')'); }
+    }
+  }catch(e){ error=String(e); }
+  btn.disabled=false; btn.textContent='Params';
+  if(error && /scope/.test(error)){ toast('Host not in scope.','warn'); openScope(); return; }
+  if(error){ toast(error,'warn'); return; }
+  toast(found.length? ('Hidden params: '+found.join(', ')) : 'No hidden parameters found', found.length?'bad':'ok');
+}
+
+// Copy a flow as a curl command.
+function copyAsCurl(f){
+  let cmd=`curl -x http://127.0.0.1:8080 '${f.scheme}://${f.host}${f.path}'`;
+  if(f.method && f.method!=='GET') cmd+=` -X ${f.method}`;
+  if(f.reqHeaders) Object.keys(f.reqHeaders).forEach(n=>{ if(n.toLowerCase()==='host')return;
+    f.reqHeaders[n].forEach(v=>cmd+=` -H '${n}: ${String(v).replace(/'/g,"'\\''")}'`); });
+  const b=decodeBody(f.reqBody); if(b.text) cmd+=` --data-raw '${b.text.replace(/'/g,"'\\''")}'`;
+  navigator.clipboard.writeText(cmd).then(()=>toast('curl command copied','ok'),()=>toast('copy failed','warn'));
+}
+// Append a flow to the login macro.
+async function addToMacro(f){
+  let ids=[]; try{ ids=await (await fetch('/macro')).json()||[]; }catch(e){}
+  if(!ids.includes(f.id)) ids.push(f.id);
+  await fetch('/macro',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(ids)});
+  toast(`Added to login macro (${ids.length} step${ids.length>1?'s':''})`,'ok');
+}
+$('#macroReplay').addEventListener('click', async ()=>{
+  $('#macroStatus').textContent='replaying…';
+  try{ const r=await (await fetch('/macro/replay',{method:'POST'})).json();
+    $('#macroStatus').textContent=`${r.steps} step(s); cookie: ${r.cookie? r.cookie.slice(0,40)+'…':'(none)'}`;
+    openSession(); // reload to show the captured Cookie header
+    toast('Login macro replayed — session updated','ok');
+  }catch(e){ $('#macroStatus').textContent='error'; }
+});
+
+// Scheduling modal.
+async function openSchedule(){
+  try{ const s=await (await fetch('/schedule')).json();
+    $('#schedEnabled').checked=s.enabled; $('#schedInterval').value=s.intervalMin||60;
+    let st=s.enabled?('Enabled, every '+s.intervalMin+' min'):'Disabled';
+    if(s.nextRun) st+=' · next '+new Date(s.nextRun).toLocaleTimeString();
+    if(s.lastRun) st+=' · last '+new Date(s.lastRun).toLocaleTimeString();
+    if(s.running) st+=' · RUNNING';
+    $('#schedStatus').textContent=st;
+  }catch(e){}
+  $('#scheduleModal').classList.add('show');
+}
+$('#scheduleBtn').addEventListener('click', openSchedule);
+$('#scheduleClose').addEventListener('click', ()=>$('#scheduleModal').classList.remove('show'));
+$('#scheduleCancel').addEventListener('click', ()=>$('#scheduleModal').classList.remove('show'));
+$('#scheduleSave').addEventListener('click', async ()=>{
+  await fetch('/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:$('#schedEnabled').checked,intervalMin:parseInt($('#schedInterval').value)||60})});
+  $('#scheduleModal').classList.remove('show'); toast('Schedule saved','ok');
+});
+
+// Scope modal.
+async function openScope(){
+  try{ const s=await (await fetch('/scope')).json();
+    $('#scopeInc').value=(s.include||[]).join('\n'); $('#scopeExc').value=(s.exclude||[]).join('\n');
+  }catch(e){}
+  $('#scopeModal').classList.add('show');
+}
+async function saveScope(){
+  const include=$('#scopeInc').value.split('\n').map(x=>x.trim()).filter(Boolean);
+  const exclude=$('#scopeExc').value.split('\n').map(x=>x.trim()).filter(Boolean);
+  await fetch('/scope',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({include,exclude})});
+  $('#scopeModal').classList.remove('show'); toast('Scope saved','ok');
+}
+$('#sevFilter').addEventListener('change', e=>{ sevFilterVal=e.target.value; renderIssueList(); });
+$('#reportBtn').addEventListener('click', ()=>window.open('/report','_blank'));
+$('#reportJsonBtn').addEventListener('click', ()=>window.location='/report?format=json&dl=1');
+$('#reportSarifBtn').addEventListener('click', ()=>window.location='/report?format=sarif&dl=1');
+$('#scanAllBtn').addEventListener('click', scanAll);
+async function scanAll(){
+  const btn=$('#scanAllBtn'); btn.disabled=true; const orig=btn.textContent;
+  toast('Scanning all in-scope requests…','');
+  let total=0, found=0, error=null;
+  try{
+    const res=await fetch('/scan/all',{method:'POST'});
+    const reader=res.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {done,value}=await reader.read(); if(done) break; buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){ const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1); if(!line) continue;
+        let o; try{o=JSON.parse(line);}catch(e){continue;}
+        if(o.done){ total=o.scanned; found=o.findings; }
+        else { btn.textContent=`Scanning ${o.scanned}/${o.total}…`; found=o.findings; }
+      }
+    }
+  }catch(e){ error=String(e); }
+  btn.disabled=false; btn.textContent=orig;
+  if(error){ toast('Scan all: '+error,'warn'); return; }
+  if(!total){ toast('No in-scope requests to scan — add hosts under Scope.','warn'); openScope(); return; }
+  toast(`Scanned ${total} endpoint(s) — ${found} new finding(s)`, found?'bad':'ok');
+}
+$('#scopeBtn').addEventListener('click', openScope);
+
+// Session headers modal.
+function sessRowHTML(h){ h=h||{name:'',value:''};
+  return `<tr><td style="padding:3px 0"><input class="tin sess-n" value="${esc(h.name)}" placeholder="Header name" style="width:98%"></td>
+    <td style="padding:3px 0"><input class="tin sess-v" value="${esc(h.value)}" placeholder="value" style="width:98%"></td>
+    <td style="width:30px"><button class="btn sess-del">✕</button></td></tr>`; }
+function sessAddRow(h){ const t=document.createElement('tbody'); t.innerHTML=sessRowHTML(h); const tr=t.firstElementChild;
+  tr.querySelector('.sess-del').addEventListener('click',()=>tr.remove()); $('#sessRows').appendChild(tr); }
+async function openSession(){
+  try{ const hs=await (await fetch('/session')).json()||[]; $('#sessRows').innerHTML=''; hs.forEach(sessAddRow); if(!hs.length) sessAddRow(); }catch(e){}
+  $('#sessionModal').classList.add('show');
+}
+$('#sessionBtn').addEventListener('click', openSession);
+$('#sessionClose').addEventListener('click', ()=>$('#sessionModal').classList.remove('show'));
+$('#sessCancel').addEventListener('click', ()=>$('#sessionModal').classList.remove('show'));
+$('#sessAdd').addEventListener('click', ()=>sessAddRow());
+$('#sessSave').addEventListener('click', async ()=>{
+  const hs=Array.from($('#sessRows').children).map(tr=>({name:tr.querySelector('.sess-n').value.trim(),value:tr.querySelector('.sess-v').value})).filter(h=>h.name);
+  await fetch('/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(hs)});
+  $('#sessionModal').classList.remove('show'); toast('Session headers saved','ok');
+});
+$('#sessionModal').addEventListener('click', e=>{ if(e.target.id==='sessionModal') $('#sessionModal').classList.remove('show'); });
+$('#scopeClose').addEventListener('click', ()=>$('#scopeModal').classList.remove('show'));
+$('#scopeCancel').addEventListener('click', ()=>$('#scopeModal').classList.remove('show'));
+$('#scopeSave').addEventListener('click', saveScope);
+$('#scopeModal').addEventListener('click', e=>{ if(e.target.id==='scopeModal') $('#scopeModal').classList.remove('show'); });
+
+/* ---------- Target site map ---------- */
+let siteMap={}; // host -> { path -> true }
+function siteAdd(f){
+  const path=(f.path||'/').split('?')[0];
+  (siteMap[f.host]=siteMap[f.host]||{})[path]=true;
+}
+let scopeInc=[];
+function matchScopeHost(host){
+  if(!scopeInc.length) return false;
+  host=(host||'').toLowerCase().split(':')[0];
+  return scopeInc.some(p=>{ p=p.toLowerCase().trim();
+    if(p===host) return true;
+    if(p.startsWith('*.')){ const b=p.slice(2); return host===b||host.endsWith('.'+b); }
+    return false;
+  });
+}
+function renderSiteTree(){
+  let hosts=Object.keys(siteMap).sort();
+  if($('#targetScopeOnly')&&$('#targetScopeOnly').checked) hosts=hosts.filter(matchScopeHost);
+  const el=$('#siteTree');
+  if(!hosts.length){ el.innerHTML='<div class="empty" style="padding:30px">No traffic yet. Browse through the proxy to build the site map.</div>'; return; }
+  el.innerHTML='';
+  // Count findings per host for badges.
+  const fcount={}; (findings||[]).forEach(f=>{ fcount[f.host]=(fcount[f.host]||0)+1; });
+  hosts.forEach(host=>{
+    const paths=Object.keys(siteMap[host]).sort();
+    const d=document.createElement('details'); d.open = hosts.length<=3;
+    const s=document.createElement('summary');
+    const fc=fcount[host]||0;
+    s.innerHTML=esc(host)+' ('+paths.length+')'+(fc?` <span style="color:var(--red);font-weight:700">⚠ ${fc}</span>`:'');
+    d.appendChild(s);
+    paths.forEach(p=>{
+      const row=document.createElement('div'); row.className='treepath'; row.textContent=p;
+      row.title=host+p;
+      row.addEventListener('click',()=>showTargetPath(host,p,row));
+      d.appendChild(row);
+    });
+    el.appendChild(d);
+  });
+}
+async function showTargetPath(host, path, row){
+  document.querySelectorAll('.treepath.sel').forEach(x=>x.classList.remove('sel'));
+  if(row) row.classList.add('sel');
+  // Find flows for this host (fetch list filtered by host), then the exact path.
+  let flows=[];
+  try{ flows=await (await fetch('/flows?host='+encodeURIComponent(host)+'&limit=500')).json()||[]; }catch(e){}
+  const matches=flows.filter(f=>(f.path||'').split('?')[0]===path);
+  const list=matches.map(f=>`<tr data-id="${f.id}" style="cursor:pointer">
+    <td class="col-method ${methodClass(f.method)}">${esc(f.method)}</td>
+    <td class="col-status ${statusClass(f.status)}">${f.status||''}</td>
+    <td class="col-path" title="${esc(f.path)}">${esc(f.path)}</td>
+    <td class="col-len">${f.length||0}</td></tr>`).join('');
+  $('#targetDetail').innerHTML=`<div style="padding:10px 14px;border-bottom:1px solid var(--line);color:var(--accent2);font:12px var(--mono)">${esc(host)}${esc(path)} — ${matches.length} request(s)</div>
+    <table style="width:100%"><tbody id="targetFlows">${list}</tbody></table>
+    <div id="targetReqResp"></div>`;
+  $('#targetFlows')?.querySelectorAll('tr').forEach(tr=>tr.addEventListener('click', async ()=>{
+    const f=await (await fetch('/flow?id='+tr.dataset.id)).json();
+    $('#targetReqResp').innerHTML=`<div style="display:flex;border-top:1px solid var(--line)">
+      <pre style="flex:1;margin:0;padding:12px;font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word;border-right:1px solid var(--line);max-height:320px;overflow:auto">${requestView(f)}</pre>
+      <pre style="flex:1;margin:0;padding:12px;font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto">${responseView(f)}</pre></div>`;
+  }));
+}
+async function loadSiteMap(){
+  try{ const s=await (await fetch('/scope')).json(); scopeInc=s.include||[]; }catch(e){}
+  try{ const flows=await (await fetch('/flows?limit=1000')).json()||[];
+    siteMap={}; flows.forEach(siteAdd); renderSiteTree();
+  }catch(e){}
+}
+
+/* ---------- WebSocket log ---------- */
+let wsCount=0;
+function wsRowHTML(m){
+  const t=new Date(m.time).toLocaleTimeString();
+  const dc=m.direction==='send'?'var(--green)':'var(--accent2)';
+  return `<tr><td class="col-time">${esc(t)}</td>
+    <td class="col-method" style="color:${dc};font-weight:700">${esc(m.direction)}</td>
+    <td class="col-status" style="color:var(--muted)">${esc(m.opcode)}</td>
+    <td class="col-host">${esc(m.host)}</td>
+    <td style="white-space:pre-wrap;word-break:break-word">${esc(m.payload)}</td></tr>`;
+}
+function wsAdd(m, prepend){
+  const tmp=document.createElement('tbody'); tmp.innerHTML=wsRowHTML(m);
+  const tr=tmp.firstElementChild;
+  if(prepend) $('#wsRows').prepend(tr); else $('#wsRows').append(tr);
+  wsCount++; const b=$('#wsBadge'); b.style.display=''; b.textContent=wsCount;
+}
+async function loadWS(){
+  try{ const d=await (await fetch('/ws')).json()||[];
+    $('#wsRows').innerHTML=''; wsCount=0;
+    d.slice().reverse().forEach(m=>wsAdd(m,false));
+  }catch(e){}
+}
+function connectWS(){ const es=new EventSource('/ws/events'); es.onmessage=ev=>{ try{ wsAdd(JSON.parse(ev.data), true); }catch(e){} }; }
+$('#wsrSend').addEventListener('click', async ()=>{
+  const body={scheme:$('#wsrScheme').value,host:$('#wsrHost').value.trim(),path:$('#wsrPath').value.trim()||'/',message:$('#wsrMsg').value};
+  if(!body.host){ toast('Set the WS host','warn'); return; }
+  $('#wsrReply').textContent='sending…';
+  try{ const r=await (await fetch('/ws/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+    $('#wsrReply').textContent = r.error? ('⚠ '+r.error) : ('reply: '+r.reply);
+    $('#wsrReply').style.color = r.error? 'var(--amber)':'var(--accent2)';
+  }catch(e){ $('#wsrReply').textContent='error'; }
+});
+
+/* ---------- WebSocket interception ---------- */
+let wsInterceptOn=false, wsHeldQueue=[], wsCurrentHeld=null;
+function setWSInterceptBtn(){ const b=$('#wsInterceptBtn');
+  b.textContent='Intercept WS: '+(wsInterceptOn?'on':'off');
+  b.style.background=wsInterceptOn?'var(--blue)':''; b.style.color=wsInterceptOn?'#06202a':''; b.style.borderColor=wsInterceptOn?'var(--blue)':''; }
+async function toggleWSIntercept(){ wsInterceptOn=!wsInterceptOn;
+  await fetch('/wsintercept/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:wsInterceptOn})});
+  setWSInterceptBtn(); if(wsInterceptOn) refreshWSIntercept(); else $('#wsInterceptPanel').style.display='none'; }
+async function refreshWSIntercept(){
+  try{ const d=await (await fetch('/wsintercept')).json(); wsInterceptOn=d.enabled; setWSInterceptBtn();
+    wsHeldQueue=d.pending||[]; if(wsInterceptOn && wsHeldQueue.length) showWSHeld(wsHeldQueue[0]); else $('#wsInterceptPanel').style.display='none'; }catch(e){} }
+function showWSHeld(h){ if(!h){ $('#wsInterceptPanel').style.display='none'; wsCurrentHeld=null; return; }
+  wsCurrentHeld=h; $('#wsInterceptMeta').textContent=h.direction+' '+h.opcode+' · '+h.host;
+  $('#wsInterceptQueue').textContent=wsHeldQueue.length>1?(wsHeldQueue.length-1)+' more':'';
+  $('#wsInterceptPayload').value=h.payload; $('#wsInterceptPanel').style.display='flex'; }
+async function resolveWSHeld(action){ if(!wsCurrentHeld) return;
+  await fetch('/wsintercept/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:wsCurrentHeld.id,action,payload:$('#wsInterceptPayload').value})});
+  $('#wsInterceptPanel').style.display='none'; setTimeout(refreshWSIntercept,120); }
+$('#wsInterceptBtn').addEventListener('click', toggleWSIntercept);
+$('#wsInterceptForward').addEventListener('click', ()=>resolveWSHeld('forward'));
+$('#wsInterceptDrop').addEventListener('click', ()=>resolveWSHeld('drop'));
+function connectWSIntercept(){ const es=new EventSource('/wsintercept/events'); es.onmessage=()=>{ if(wsInterceptOn) refreshWSIntercept(); }; }
+
+/* ---------- Interception ---------- */
+let interceptOn=false, interceptRespOn=false, heldQueue=[], currentHeld=null;
+function setInterceptBtn(){
+  const b=$('#interceptBtn');
+  b.textContent='Intercept: '+(interceptOn?'on':'off');
+  b.style.background=interceptOn?'var(--red)':''; b.style.borderColor=interceptOn?'var(--red)':''; b.style.color=interceptOn?'#fff':'';
+  const rb=$('#interceptRespBtn');
+  rb.textContent='Resp: '+(interceptRespOn?'on':'off');
+  rb.style.background=interceptRespOn?'var(--amber)':''; rb.style.borderColor=interceptRespOn?'var(--amber)':''; rb.style.color=interceptRespOn?'#06202a':'';
+}
+async function toggleIntercept(){
+  interceptOn=!interceptOn;
+  await fetch('/intercept/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:interceptOn})});
+  setInterceptBtn(); if(interceptOn||interceptRespOn) refreshIntercept(); else hideIntercept();
+}
+async function toggleInterceptResp(){
+  interceptRespOn=!interceptRespOn;
+  await fetch('/intercept/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({respEnabled:interceptRespOn})});
+  setInterceptBtn(); if(interceptOn||interceptRespOn) refreshIntercept(); else hideIntercept();
+}
+async function refreshIntercept(){
+  try{ const d=await (await fetch('/intercept')).json();
+    interceptOn=d.enabled; interceptRespOn=d.respEnabled; setInterceptBtn();
+    heldQueue=d.pending||[];
+    if((interceptOn||interceptRespOn) && heldQueue.length) showHeld(heldQueue[0]); else hideIntercept();
+  }catch(e){}
+}
+function showHeld(h){
+  if(!h){ hideIntercept(); return; }
+  currentHeld=h;
+  $('#interceptTitle').textContent=(h.kind==='response'?'Response':'Request')+' intercepted';
+  $('#interceptMeta').textContent=(h.kind==='response'?(h.status+' ← '):'')+h.method+' '+h.scheme+'://'+h.host;
+  $('#interceptQueue').textContent=heldQueue.length>1?(heldQueue.length-1)+' more queued':'';
+  $('#interceptRaw').value=h.raw;
+  $('#interceptPanel').style.display='flex';
+}
+function hideIntercept(){ $('#interceptPanel').style.display='none'; currentHeld=null; }
+async function resolveHeld(action){
+  if(!currentHeld) return;
+  const raw=$('#interceptRaw').value;
+  await fetch('/intercept/resolve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:currentHeld.id,action,raw})});
+  hideIntercept();
+  setTimeout(refreshIntercept, 150); // show next in queue if any
+}
+$('#interceptBtn').addEventListener('click', toggleIntercept);
+$('#interceptRespBtn').addEventListener('click', toggleInterceptResp);
+$('#interceptForward').addEventListener('click', ()=>resolveHeld('forward'));
+$('#interceptDrop').addEventListener('click', ()=>resolveHeld('drop'));
+function connectIntercept(){ const es=new EventSource('/intercept/events'); es.onmessage=()=>{ if(interceptOn) refreshIntercept(); }; }
+
+/* ---------- OOB ---------- */
+let oobCount=0;
+function oobRowHTML(i){
+  const t=new Date(i.time).toLocaleTimeString();
+  return `<tr><td class="col-time">${esc(t)}</td><td class="col-method m-GET">${esc(i.method)}</td>
+    <td>${esc(i.path)}</td><td class="col-host">${esc(i.token||'—')}</td><td style="color:var(--muted)">${esc(i.remoteAddr||'')}</td></tr>`;
+}
+function oobAdd(i, prepend){
+  const tmp=document.createElement('tbody'); tmp.innerHTML=oobRowHTML(i);
+  const tr=tmp.firstElementChild;
+  if(prepend) $('#oobRows').prepend(tr); else $('#oobRows').append(tr);
+  oobCount++; const b=$('#oobBadge'); b.style.display=''; b.textContent=oobCount;
+}
+async function loadOOB(){
+  try{ const d=await (await fetch('/oob')).json();
+    $('#oobBase').textContent=d.baseUrl; $('#oobRows').innerHTML='';
+    (d.interactions||[]).forEach(i=>oobAdd(i,false));
+  }catch(e){}
+}
+function connectOOB(){ const es=new EventSource('/oob/events'); es.onmessage=ev=>{ try{ oobAdd(JSON.parse(ev.data), true); }catch(e){} }; }
+$('#oobCopy').addEventListener('click', async ()=>{
+  try{ const d=await (await fetch('/oob/token')).json();
+    await navigator.clipboard.writeText(d.url); toast('Payload URL copied: '+d.url,'ok');
+  }catch(e){ toast('Could not copy','warn'); }
+});
+
+/* ---------- Tools: Decoder ---------- */
+function u8ToStr(u8){ return new TextDecoder('utf-8',{fatal:false}).decode(u8); }
+function strToU8(s){ return new TextEncoder().encode(s); }
+function b64decode(s){ const bin=atob(s.trim()); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i); return u8ToStr(u); }
+function b64encode(s){ const u=strToU8(s); let bin=''; u.forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin); }
+function b64urlDecode(s){ s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4)s+='='; return b64decode(s); }
+function hexEncode(s){ return Array.from(strToU8(s)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+function hexDecode(s){ s=s.replace(/[^0-9a-fA-F]/g,''); const u=new Uint8Array(s.length/2); for(let i=0;i<u.length;i++)u[i]=parseInt(s.substr(i*2,2),16); return u8ToStr(u); }
+function htmlEncode(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function htmlDecode(s){ const d=document.createElement('div'); d.innerHTML=s; return d.textContent; }
+function jwtDecode(s){
+  const p=s.trim().split('.'); if(p.length<2) throw new Error('not a JWT');
+  const head=JSON.parse(b64urlDecode(p[0])); const body=JSON.parse(b64urlDecode(p[1]));
+  return 'HEADER:\n'+JSON.stringify(head,null,2)+'\n\nPAYLOAD:\n'+JSON.stringify(body,null,2)+(p[2]?'\n\nSIGNATURE:\n'+p[2]:'');
+}
+function runDecoder(){
+  const op=$('#decOp').value, inp=$('#decIn').value;
+  let out='';
+  try{
+    switch(op){
+      case 'b64d': out=b64decode(inp); break; case 'b64e': out=b64encode(inp); break;
+      case 'urld': out=decodeURIComponent(inp.replace(/\+/g,' ')); break; case 'urle': out=encodeURIComponent(inp); break;
+      case 'htmld': out=htmlDecode(inp); break; case 'htmle': out=htmlEncode(inp); break;
+      case 'hexd': out=hexDecode(inp); break; case 'hexe': out=hexEncode(inp); break;
+      case 'jwt': out=jwtDecode(inp); break;
+    }
+  }catch(e){ out='[error] '+e.message; }
+  $('#decOut').value=out;
+}
+$('#decRun').addEventListener('click', runDecoder);
+$('#decSwap').addEventListener('click', ()=>{ $('#decIn').value=$('#decOut').value; $('#decOut').value=''; });
+$('#decClear').addEventListener('click', ()=>{ $('#decIn').value=''; $('#decOut').value=''; });
+
+/* ---------- Tools: Comparer (LCS line diff) ---------- */
+function lineDiff(a,b){
+  const A=a.split('\n'), B=b.split('\n');
+  const n=A.length,m=B.length;
+  const dp=Array.from({length:n+1},()=>new Int32Array(m+1));
+  for(let i=n-1;i>=0;i--)for(let j=m-1;j>=0;j--)
+    dp[i][j]=A[i]===B[j]?dp[i+1][j+1]+1:Math.max(dp[i+1][j],dp[i][j+1]);
+  let i=0,j=0,out=[],diffs=0;
+  while(i<n&&j<m){
+    if(A[i]===B[j]){ out.push({t:' ',l:A[i]}); i++;j++; }
+    else if(dp[i+1][j]>=dp[i][j+1]){ out.push({t:'-',l:A[i]}); i++; diffs++; }
+    else { out.push({t:'+',l:B[j]}); j++; diffs++; }
+  }
+  while(i<n){ out.push({t:'-',l:A[i++]}); diffs++; }
+  while(j<m){ out.push({t:'+',l:B[j++]}); diffs++; }
+  return {out,diffs};
+}
+$('#cmpRun').addEventListener('click', ()=>{
+  const a=$('#cmpA').value, b=$('#cmpB').value;
+  const {out,diffs}=lineDiff(a,b);
+  const html=out.map(o=>{
+    const c=o.t==='+'?'var(--green)':o.t==='-'?'var(--red)':'var(--muted)';
+    const bg=o.t==='+'?'rgba(74,222,128,.08)':o.t==='-'?'rgba(248,113,113,.08)':'transparent';
+    return `<div style="color:${c};background:${bg}">${esc(o.t)} ${esc(o.l)}</div>`;
+  }).join('');
+  $('#cmpDiff').innerHTML=html||'<span style="color:var(--muted)">identical</span>';
+  $('#cmpResult').textContent=`${diffs} line(s) differ · A ${a.length}b · B ${b.length}b`;
+});
+function toolTab(name){
+  ['decoder','comparer','mr','jwt'].forEach(t=>{
+    $('#tool-'+t+'-tab').classList.toggle('active', t===name);
+    $('#tool-'+t).style.display = t===name?'flex':'none';
+  });
+}
+$('#tool-decoder-tab').addEventListener('click', ()=>toolTab('decoder'));
+$('#tool-comparer-tab').addEventListener('click', ()=>toolTab('comparer'));
+$('#tool-mr-tab').addEventListener('click', ()=>{ toolTab('mr'); loadMR(); });
+$('#tool-jwt-tab').addEventListener('click', ()=>toolTab('jwt'));
+
+/* ---------- Tools: JWT editor / attacker ---------- */
+function b64urlEncode(s){ return btoa(unescape(encodeURIComponent(s))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function b64urlEncodeBytes(bytes){ let bin=''; new Uint8Array(bytes).forEach(b=>bin+=String.fromCharCode(b)); return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''); }
+function jwtParse(t){ const p=t.trim().split('.'); if(p.length<2) throw new Error('not a JWT');
+  return {header:JSON.parse(b64urlDecode(p[0])), payload:JSON.parse(b64urlDecode(p[1])), sig:p[2]||''}; }
+async function hmacSha256(secret, data){
+  const key=await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), {name:'HMAC',hash:'SHA-256'}, false, ['sign']);
+  return await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+}
+$('#jwtDecode').addEventListener('click', ()=>{
+  try{ const j=jwtParse($('#jwtIn').value); $('#jwtHeader').value=JSON.stringify(j.header,null,2); $('#jwtPayload').value=JSON.stringify(j.payload,null,2); $('#jwtMsg').textContent='alg = '+(j.header.alg||'?'); $('#jwtMsg').style.color='var(--accent2)'; }
+  catch(e){ $('#jwtMsg').textContent='error: '+e.message; $('#jwtMsg').style.color='var(--red)'; }
+});
+$('#jwtNone').addEventListener('click', ()=>{
+  try{ const payload=JSON.parse($('#jwtPayload').value||'{}');
+    const tok=b64urlEncode(JSON.stringify({alg:'none',typ:'JWT'}))+'.'+b64urlEncode(JSON.stringify(payload))+'.';
+    $('#jwtOut').value=tok; $('#jwtMsg').textContent='Forged unsigned token (alg:none).'; $('#jwtMsg').style.color='var(--amber)';
+  }catch(e){ $('#jwtMsg').textContent='error: '+e.message; $('#jwtMsg').style.color='var(--red)'; }
+});
+$('#jwtResign').addEventListener('click', async ()=>{
+  try{ const header={alg:'HS256',typ:'JWT'}; const payload=JSON.parse($('#jwtPayload').value||'{}');
+    const signing=b64urlEncode(JSON.stringify(header))+'.'+b64urlEncode(JSON.stringify(payload));
+    const sig=await hmacSha256($('#jwtSecret').value, signing);
+    $('#jwtOut').value=signing+'.'+b64urlEncodeBytes(sig); $('#jwtMsg').textContent='Re-signed with HS256.'; $('#jwtMsg').style.color='var(--green)';
+  }catch(e){ $('#jwtMsg').textContent='error: '+e.message; $('#jwtMsg').style.color='var(--red)'; }
+});
+const JWT_SECRETS=['secret','password','123456','changeme','admin','jwt','key','token','test','secretkey','your-256-bit-secret','supersecret','private','s3cr3t','qwerty','letmein','default','iloveyou','root','pass'];
+$('#jwtCrack').addEventListener('click', async ()=>{
+  try{ const j=jwtParse($('#jwtIn').value); if((j.header.alg||'').toUpperCase()!=='HS256'){ $('#jwtMsg').textContent='Secret cracking only applies to HS256 tokens.'; $('#jwtMsg').style.color='var(--amber)'; return; }
+    const p=$('#jwtIn').value.trim().split('.'); const signing=p[0]+'.'+p[1];
+    $('#jwtMsg').textContent='trying '+JWT_SECRETS.length+' secrets…'; $('#jwtMsg').style.color='var(--muted)';
+    for(const s of JWT_SECRETS){ const sig=b64urlEncodeBytes(await hmacSha256(s, signing)); if(sig===p[2]){ $('#jwtMsg').textContent='✓ SECRET FOUND: "'+s+'"'; $('#jwtMsg').style.color='var(--red)'; $('#jwtSecret').value=s; return; } }
+    $('#jwtMsg').textContent='No secret from the built-in list matched (token may use a strong secret).'; $('#jwtMsg').style.color='var(--green)';
+  }catch(e){ $('#jwtMsg').textContent='error: '+e.message; $('#jwtMsg').style.color='var(--red)'; }
+});
+
+/* ---------- Tools: Match & Replace ---------- */
+const MR_PARTS=['req-line','req-header','req-body','resp-header','resp-body'];
+function mrRowHTML(r){
+  r=r||{enabled:true,name:'',part:'resp-body',match:'',replace:'',host:''};
+  const opts=MR_PARTS.map(p=>`<option value="${p}" ${p===r.part?'selected':''}>${p}</option>`).join('');
+  return `<tr>
+    <td style="padding:4px 6px"><input type="checkbox" class="mr-en" ${r.enabled?'checked':''}></td>
+    <td style="padding:4px 6px"><input class="tin mr-name" value="${esc(r.name)}" style="width:100%"></td>
+    <td style="padding:4px 6px"><select class="tin mr-part">${opts}</select></td>
+    <td style="padding:4px 6px"><input class="tin mr-match" value="${esc(r.match)}" style="width:100%" placeholder="regex"></td>
+    <td style="padding:4px 6px"><input class="tin mr-replace" value="${esc(r.replace)}" style="width:100%"></td>
+    <td style="padding:4px 6px"><input class="tin mr-host" value="${esc(r.host)}" style="width:100%" placeholder="(any)"></td>
+    <td style="padding:4px 6px"><button class="btn mr-del" title="delete">✕</button></td></tr>`;
+}
+async function loadMR(){
+  try{ const rules=await (await fetch('/matchreplace')).json()||[];
+    $('#mrRows').innerHTML=''; rules.forEach(r=>mrAddRow(r));
+    if(!rules.length) mrAddRow();
+  }catch(e){}
+}
+function mrAddRow(r){
+  const tmp=document.createElement('tbody'); tmp.innerHTML=mrRowHTML(r);
+  const tr=tmp.firstElementChild;
+  tr.querySelector('.mr-del').addEventListener('click', ()=>tr.remove());
+  $('#mrRows').appendChild(tr);
+}
+function mrCollect(){
+  return Array.from($('#mrRows').children).map(tr=>({
+    enabled: tr.querySelector('.mr-en').checked,
+    name: tr.querySelector('.mr-name').value,
+    part: tr.querySelector('.mr-part').value,
+    match: tr.querySelector('.mr-match').value,
+    replace: tr.querySelector('.mr-replace').value,
+    host: tr.querySelector('.mr-host').value,
+  })).filter(r=>r.name||r.match||r.replace);
+}
+$('#mrAdd').addEventListener('click', ()=>mrAddRow());
+$('#mrSave').addEventListener('click', async ()=>{
+  await fetch('/matchreplace',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(mrCollect())});
+  toast('Match & Replace rules saved','ok');
+});
+
+/* ---------- Fuzzer ---------- */
+let fzPLVals = {};      // position index -> payload text (persisted across re-renders)
+let fzAbort = null;
+
+function fzPositions(){
+  const parts = $('#fzTpl').value.split('§');
+  const marks = parts.length - 1;
+  const unbalanced = marks % 2 !== 0;
+  const n = Math.floor(marks/2);
+  const bases = [];
+  for(let i=1;i<parts.length;i+=2) bases.push(parts[i]);
+  return {n, bases, unbalanced};
+}
+function fzRenderPayloads(){
+  const {n, bases, unbalanced} = fzPositions();
+  const attack = $('#fzAttack').value;
+  const lbl = $('#fzPosCount');
+  lbl.textContent = unbalanced ? 'unbalanced §' : (n + (n===1?' position':' positions'));
+  lbl.style.color = unbalanced ? 'var(--red)' : 'var(--accent2)';
+
+  const wrap = $('#fzPayloads');
+  wrap.innerHTML = '';
+  const boxes = (attack==='sniper') ? 1 : Math.max(n,1);
+  for(let k=0;k<boxes;k++){
+    const cap = (attack==='sniper')
+      ? 'All positions — one list'
+      : `Position ${k+1}${bases[k]!==undefined?` — base: ${esc(bases[k])}`:''}`;
+    const box=document.createElement('div'); box.className='pl-box';
+    box.innerHTML=`<div class="cap">${cap}</div><textarea class="pl" data-k="${k}" spellcheck="false" placeholder="one payload per line">${esc(fzPLVals[k]||'')}</textarea>`;
+    const ta=box.querySelector('textarea');
+    ta.addEventListener('input', ()=>{ fzPLVals[k]=ta.value; });
+    wrap.appendChild(box);
+  }
+}
+$('#fzTpl').addEventListener('input', fzRenderPayloads);
+$('#fzAttack').addEventListener('change', fzRenderPayloads);
+$('#fzWrap').addEventListener('click', ()=>{
+  const ta=$('#fzTpl'); const s=ta.selectionStart, e=ta.selectionEnd;
+  const v=ta.value; const sel=v.slice(s,e) || 'PAYLOAD';
+  ta.value = v.slice(0,s)+'§'+sel+'§'+v.slice(e);
+  ta.focus(); ta.selectionStart=s+1; ta.selectionEnd=s+1+sel.length;
+  fzRenderPayloads();
+});
+
+function fzLines(t){ return (t||'').split('\n').map(x=>x).filter(x=>x.length>0); }
+async function processPayload(v, proc){
+  switch(proc){
+    case 'b64': return btoa(unescape(encodeURIComponent(v)));
+    case 'url': return encodeURIComponent(v);
+    case 'upper': return v.toUpperCase();
+    case 'lower': return v.toLowerCase();
+    case 'sha256': { const h=await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v));
+      return Array.from(new Uint8Array(h)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+    default: return v;
+  }
+}
+
+function fzRowHTML(r){
+  const pl = (r.payloads||[]).join('  ·  ');
+  return `<tr class="${r.matched?'match':''}">
+    <td class="col-idx">${r.index}</td>
+    <td class="col-mk mk">${r.matched?'✓':''}</td>
+    <td class="pl">${esc(pl)}</td>
+    <td class="col-status ${statusClass(r.status)}">${r.error?'ERR':(r.status||'')}</td>
+    <td class="col-len">${r.length||0}</td>
+    <td class="col-ms">${r.durationMs||0}</td>
+    <td style="color:var(--accent2)">${esc(r.extracted||'')}</td>
+    <td style="color:var(--red)">${esc(r.error||'')}</td></tr>`;
+}
+
+async function fzStart(){
+  const {n, unbalanced} = fzPositions();
+  if(unbalanced){ alert('Unbalanced § markers — each position needs an opening and closing §.'); return; }
+  if(n===0){ alert('Mark at least one payload position by wrapping text in § §.'); return; }
+  const attack=$('#fzAttack').value;
+  const proc=$('#fzProcess').value;
+  const processList=async l=>{ const out=[]; for(const v of l) out.push(await processPayload(v,proc)); return out; };
+  let payloads=[];
+  if(attack==='sniper'){ payloads=[await processList(fzLines(fzPLVals[0]))]; if(!payloads[0].length){ alert('Add at least one payload.'); return; } }
+  else { for(let k=0;k<n;k++){ const l=fzLines(fzPLVals[k]); if(!l.length){ alert('Position '+(k+1)+' has no payloads.'); return; } payloads.push(await processList(l)); } }
+
+  const cfg={ scheme:$('#fzScheme').value, host:$('#fzHost').value.trim(),
+    template:$('#fzTpl').value, attack, payloads,
+    grep:$('#fzGrep').value, extract:$('#fzExtract').value, concurrency:parseInt($('#fzConc').value)||10, delayMs:parseInt($('#fzDelay').value)||0 };
+  if(!cfg.host){ alert('Set the target host.'); return; }
+
+  $('#fzRows').innerHTML=''; let count=0, matched=0;
+  $('#fzStart').disabled=true; $('#fzStop').disabled=false;
+  $('#fzProgress').textContent='running…';
+  fzAbort=new AbortController();
+  try{
+    const res=await fetch('/fuzz',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg),signal:fzAbort.signal});
+    const reader=res.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {done,value}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      let nl; while((nl=buf.indexOf('\n'))>=0){
+        const line=buf.slice(0,nl).trim(); buf=buf.slice(nl+1);
+        if(!line) continue;
+        let obj; try{ obj=JSON.parse(line); }catch(e){ continue; }
+        if(obj.done){ $('#fzProgress').textContent=`done — ${count} requests${obj.error?' ('+obj.error+')':''}${matched?', '+matched+' matched':''}`; }
+        else{ const tmp=document.createElement('tbody'); tmp.innerHTML=fzRowHTML(obj); $('#fzRows').appendChild(tmp.firstElementChild); count++; if(obj.matched) matched++;
+          $('#fzProgress').textContent=`running… ${count}`; }
+      }
+    }
+  }catch(e){ if(e.name==='AbortError') $('#fzProgress').textContent=`stopped — ${count} requests`; else $('#fzProgress').textContent='error: '+e; }
+  $('#fzStart').disabled=false; $('#fzStop').disabled=true; fzAbort=null;
+}
+$('#fzStart').addEventListener('click', fzStart);
+$('#fzStop').addEventListener('click', ()=>{ if(fzAbort) fzAbort.abort(); });
+
+function sendToFuzzer(f){
+  const port=f.scheme==='https'?443:80;
+  $('#fzScheme').value=f.scheme; $('#fzHost').value=f.host.includes(':')?f.host:`${f.host}:${port}`;
+  // Build template from the flow; mark nothing yet (user selects + Add §).
+  $('#fzTpl').value=flowToRaw(f).replace(/\r\n/g,'\n');
+  fzPLVals={}; fzRenderPayloads();
+  $('#nav-fuzzer').click();
+}
+fzRenderPayloads();
+
+/* ---------- SSE live stream ---------- */
+function connect(){
+  const es=new EventSource('/events');
+  es.onopen=()=>{ dot.classList.add('live'); connLbl.textContent='live'; };
+  es.onerror=()=>{ dot.classList.remove('live'); connLbl.textContent='reconnecting…'; };
+  es.onmessage=ev=>{ try{ const f=JSON.parse(ev.data); addRow(f,true); countEl.textContent=(parseInt(countEl.textContent||'0')+1);
+    siteAdd(f); if($('#view-target').classList.contains('active')) renderSiteTree(); }catch(e){} };
+}
+
+/* ---------- controls ---------- */
+$('#filter').addEventListener('input', e=>{ filterText=e.target.value.trim().toLowerCase(); loadInitial(); });
+$('#certBtn').addEventListener('click', ()=>{ window.location='/cert'; });
+$('#clearBtn').addEventListener('click', async ()=>{
+  if(!confirm('Clear all captured flows?')) return;
+  await fetch('/clear',{method:'POST'}); rowsEl.innerHTML=''; countEl.textContent='0';
+  $('#detail').innerHTML=$('#emptyDetail').outerHTML;
+  findings=[]; renderIssueList(); renderIssueSummary();
+  $('#idetail').innerHTML='<div class="empty">Select a finding to see details.</div>';
+  $('#wsRows').innerHTML=''; wsCount=0; $('#wsBadge').style.display='none';
+});
+$('#setupBtn').addEventListener('click', ()=>$('#setup').classList.add('show'));
+$('#setupClose').addEventListener('click', ()=>$('#setup').classList.remove('show'));
+$('#setup').addEventListener('click', e=>{ if(e.target.id==='setup') $('#setup').classList.remove('show'); });
+
+/* resizable split (proxy view) */
+(function(){
+  const divider=$('#divider'), hist=document.querySelector('.history'), det=$('#detail'), wrap=$('#view-proxy');
+  let dragging=false;
+  divider.addEventListener('mousedown',()=>{dragging=true;document.body.style.userSelect='none';});
+  window.addEventListener('mouseup',()=>{dragging=false;document.body.style.userSelect='';});
+  window.addEventListener('mousemove',e=>{ if(!dragging)return; const r=wrap.getBoundingClientRect();
+    const top=Math.min(Math.max(e.clientY-r.top,80), r.height-86);
+    hist.style.flex='0 0 '+top+'px'; det.style.flex='1 1 auto'; });
+})();
+
+/* boot */
+fetch('/config').then(r=>r.json()).then(c=>{ if(c.proxyAddr) $('#proxyAddr').textContent=c.proxyAddr; }).catch(()=>{});
+async function refreshCount(){ try{ const s=await (await fetch('/stats')).json(); countEl.textContent=s.flows; }catch(e){} }
+loadInitial(); refreshCount(); connect();
+loadFindings(); connectFindings();
+loadOOB(); connectOOB();
+loadWS(); connectWS();
+loadSiteMap();
+$('#nav-target').addEventListener('click', loadSiteMap);
+$('#targetScopeOnly').addEventListener('change', renderSiteTree);
+refreshIntercept(); connectIntercept();
+refreshWSIntercept(); connectWSIntercept();
+if(location.hash==='#issues'){ $('#nav-issues').click(); }
+if(location.hash==='#target'){ $('#nav-target').click(); }
+if(location.hash==='#oob'){ $('#nav-oob').click(); }
+if(location.hash==='#ws'){ $('#nav-ws').click(); }
+if(location.hash==='#tools'){ $('#nav-tools').click(); }
+// Deep link: #repeater opens the Repeater view (with a starter tab if empty).
+if(location.hash==='#repeater'){ $('#nav-repeater').click(); if(!repTabs.length) addRepeaterTab('tab 1','https','httpbin.org:443','GET /get HTTP/1.1\r\nHost: httpbin.org\r\nUser-Agent: Interlace-Repeater\r\nAccept: application/json\r\n\r\n'); }
+if(location.hash==='#fuzzer'){ $('#fzHost').value='httpbin.org'; $('#fzScheme').value='https'; $('#fzTpl').value='GET /status/§200§ HTTP/1.1\nHost: httpbin.org\n\n'; fzPLVals={0:'200\n404\n500\n418'}; fzRenderPayloads(); $('#nav-fuzzer').click(); }
+</script>
+</body>
+</html>

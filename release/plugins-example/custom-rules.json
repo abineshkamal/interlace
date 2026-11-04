@@ -1,0 +1,20 @@
+[
+  {
+    "id": "custom-debug-endpoint",
+    "name": "Debug/Trace Parameter Enabled",
+    "severity": "low",
+    "type": "grep",
+    "payloads": ["1", "true", "on"],
+    "grep": ["X-Debug-Token", "DEBUG MODE", "stack trace", "Traceback \\(most recent call last\\)"],
+    "detail": "Setting this parameter to a truthy value exposed debug output, which can leak internal details."
+  },
+  {
+    "id": "custom-spring-actuator",
+    "name": "Exposed Actuator / Env Data",
+    "severity": "medium",
+    "type": "grep",
+    "payloads": ["env", "health", "info"],
+    "grep": ["\"activeProfiles\"", "\"systemProperties\"", "\"diskSpace\""],
+    "detail": "The response exposed Spring Boot Actuator data, which may reveal configuration and secrets."
+  }
+]

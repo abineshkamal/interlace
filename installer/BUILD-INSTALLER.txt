@@ -1,0 +1,34 @@
+BUILDING THE INTERLACE WINDOWS INSTALLER
+========================================
+
+Interlace ships as a portable zip (dist\interlace-0.1.0-windows-amd64.zip) that
+needs no installation. This folder additionally lets you build a proper Windows
+setup.exe (Start Menu entry, desktop shortcut, uninstaller).
+
+PREREQUISITE
+------------
+Install Inno Setup 6 (free): https://jrsoftware.org/isdl.php
+
+STEPS
+-----
+1. Make sure the release files exist (built by the project):
+     release\interlace.exe
+     release\README.txt
+     release\plugins-example\
+   To rebuild the exe:
+     set CGO_ENABLED=0
+     go build -ldflags "-s -w" -o release\interlace.exe .\cmd\interlace
+
+2. Compile the installer:
+     iscc installer\interlace.iss
+   (or open interlace.iss in the Inno Setup IDE and press F9)
+
+3. The installer is written to:
+     installer\Output\interlace-setup-0.1.0.exe
+
+WHAT THE INSTALLER DOES
+-----------------------
+- Installs interlace.exe + README + plugins example into Program Files.
+- Creates Start Menu and (optional) desktop shortcuts that launch Interlace
+  with its data directory in %LOCALAPPDATA%\Interlace (writable, no admin).
+- Registers an uninstaller that also removes the data directory.

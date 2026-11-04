@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Interlace Report — {{.Generated}}</title>
+<style>
+  :root{--line:#d9dde6;--muted:#64748b;--high:#dc2626;--medium:#d97706;--low:#2563eb;--info:#64748b;--accent:#6d28d9}
+  *{box-sizing:border-box}
+  body{font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;color:#1e2330;margin:0;background:#fff}
+  .wrap{max-width:900px;margin:0 auto;padding:40px 32px}
+  header{display:flex;align-items:center;gap:12px;border-bottom:3px solid var(--accent);padding-bottom:16px}
+  header h1{margin:0;font-size:24px;letter-spacing:.3px}
+  header .sub{color:var(--muted);font-size:13px;margin-left:auto;text-align:right}
+  .mark{width:30px;height:30px}
+  h2{font-size:16px;margin:28px 0 12px;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .summary{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}
+  .stat{border:1px solid var(--line);border-radius:10px;padding:12px 18px;min-width:96px}
+  .stat .n{font-size:26px;font-weight:700}
+  .stat .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  .stat.high .n{color:var(--high)} .stat.medium .n{color:var(--medium)}
+  .stat.low .n{color:var(--low)} .stat.info .n{color:var(--info)}
+  .finding{border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:14px 16px;margin:12px 0;page-break-inside:avoid}
+  .finding.high{border-left-color:var(--high)} .finding.medium{border-left-color:var(--medium)}
+  .finding.low{border-left-color:var(--low)} .finding.info{border-left-color:var(--info)}
+  .finding h3{margin:0 0 6px;font-size:15px;display:flex;align-items:center;gap:10px}
+  .pill{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:5px;color:#fff}
+  .pill.high{background:var(--high)} .pill.medium{background:var(--medium)}
+  .pill.low{background:var(--low)} .pill.info{background:var(--info)}
+  .meta{color:var(--muted);font:12px ui-monospace,Consolas,monospace;margin:2px 0}
+  .detail{margin:8px 0 0}
+  .evid{background:#f6f7f9;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:12px ui-monospace,Consolas,monospace;color:#9a3412;white-space:pre-wrap;word-break:break-word;margin-top:8px}
+  .none{color:var(--muted);padding:20px;text-align:center}
+  footer{margin-top:36px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:12px}
+  @media print{.wrap{padding:0}body{font-size:12px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#6d28d9" stroke-width="2.2" stroke-linecap="round">
+      <path d="M3 7c6 0 6 10 12 10M3 17c6 0 6-10 12-10M15 7h6M15 17h6"/></svg>
+    <h1>Interlace Security Report</h1>
+    <div class="sub">Generated {{.Generated}}<br>{{.Flows}} requests observed</div>
+  </header>
+
+  <h2>Summary</h2>
+  <div class="summary">
+    <div class="stat high"><div class="n">{{.Counts.high}}</div><div class="l">High</div></div>
+    <div class="stat medium"><div class="n">{{.Counts.medium}}</div><div class="l">Medium</div></div>
+    <div class="stat low"><div class="n">{{.Counts.low}}</div><div class="l">Low</div></div>
+    <div class="stat info"><div class="n">{{.Counts.info}}</div><div class="l">Info</div></div>
+    <div class="stat"><div class="n">{{len .Findings}}</div><div class="l">Total</div></div>
+  </div>
+
+  <h2>Findings</h2>
+  {{if .Groups}}
+  {{range .Groups}}
+  <h3 style="margin:22px 0 6px;color:#6d28d9">{{.Host}} <span style="color:#64748b;font-weight:400;font-size:13px">({{len .Findings}})</span></h3>
+  {{range .Findings}}
+  <div class="finding {{.Severity}}">
+    <h3><span class="pill {{.Severity}}">{{.Severity}}</span> {{.Title}}</h3>
+    <div class="meta">{{if .URL}}{{.URL}} &nbsp;·&nbsp; {{end}}check: {{.Check}} &nbsp;·&nbsp; source: {{.Source}}</div>
+    <div class="detail">{{.Detail}}</div>
+    {{if .Evidence}}<div class="evid">{{.Evidence}}</div>{{end}}
+    <div class="detail" style="margin-top:8px"><b style="color:#166534">Remediation:</b> {{.Remediation}}</div>
+  </div>
+  {{end}}
+  {{end}}
+  {{else}}
+  <div class="none">No findings recorded.</div>
+  {{end}}
+
+  <footer>
+    Produced by Interlace. For authorized security testing only. The findings above reflect
+    automated passive and active checks and should be manually validated.
+  </footer>
+</div>
+</body>
+</html>

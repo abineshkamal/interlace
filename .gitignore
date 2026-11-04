@@ -1,0 +1,23 @@
+# Compiled binaries
+bin/
+*.exe
+
+# Runtime project data — contains the CA PRIVATE KEY and captured traffic. Never commit.
+interlace-data/
+data-*/
+
+# Release artifacts (large binaries; publish via GitHub Releases instead)
+dist/
+release/interlace.exe
+
+# Build / tooling
+*.test
+*.out
+scratch-*.json
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
