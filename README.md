@@ -11,7 +11,8 @@ serves its entire UI from a browser — no JVM, no external services.
 ## Features
 
 **Manual tools**
-- Intercepting **proxy** for HTTP, HTTPS (MITM with its own CA) and **WebSocket**
+- Intercepting **proxy** for HTTP, HTTPS (MITM with its own CA), **HTTP/2** (to
+  the client over ALPN, with HTTP/1.1 fallback) and **WebSocket**
 - **Interception** of requests, responses and WebSocket frames (pause / edit / drop)
 - **Repeater** (HTTP and WebSocket) and an Intruder-style **Fuzzer**
   (sniper / pitchfork / cluster-bomb, payload processing, grep-match/extract)
@@ -21,7 +22,10 @@ serves its entire UI from a browser — no JVM, no external services.
 - **Passive scanner** — security headers, cookie flags, CORS, mixed content,
   exposed secrets (API keys, tokens, private keys), weak JWTs
 - **Active scanner** — SQL injection (error / boolean / time-based), XSS, SSTI,
-  path traversal, command injection, open redirect, blind SSRF (out-of-band)
+  path traversal, command injection, open redirect, XXE, SSRF, prototype
+  pollution, NoSQL / LDAP / CRLF injection, insecure deserialization,
+  host-header injection, web cache poisoning, **HTTP request smuggling**
+  (CL.TE / TE.CL timing), blind SSRF (out-of-band), GraphQL introspection
 - **Crawler**, **content discovery**, **parameter mining**
 - **Scope** guardrail (fail-closed), authenticated sessions, **login macros**,
   recurring **scheduled** scans

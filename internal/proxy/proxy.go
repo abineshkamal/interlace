@@ -21,6 +21,8 @@ import (
 
 	"interlace/internal/ca"
 	"interlace/internal/model"
+
+	"golang.org/x/net/http2"
 )
 
 // hopByHop headers must not be forwarded between client and upstream.
@@ -181,8 +183,10 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 	bc := &bufferedConn{Conn: clientConn, r: br}
 
 	if len(peek) > 0 && peek[0] == 0x16 {
+		// Advertise HTTP/2 via ALPN so h2-capable clients (every modern browser)
+		// negotiate it; fall back to HTTP/1.1 otherwise.
 		tlsConf := &tls.Config{
-			NextProtos: []string{"http/1.1"},
+			NextProtos: []string{"h2", "http/1.1"},
 			GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 				name := hello.ServerName
 				if name == "" {
@@ -194,6 +198,10 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		tlsConn := tls.Server(bc, tlsConf)
 		if err := tlsConn.Handshake(); err != nil {
 			log.Printf("tls handshake %s: %v", authority, err)
+			return
+		}
+		if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
+			p.serveH2(tlsConn, authority, "https")
 			return
 		}
 		p.serveTunnel(tlsConn, bufio.NewReader(tlsConn), authority, "https", "wss")
@@ -233,6 +241,44 @@ func (p *Proxy) serveTunnel(conn net.Conn, br *bufio.Reader, authority, scheme, 
 			return
 		}
 	}
+}
+
+// serveH2 serves an HTTP/2 connection to a client that negotiated "h2" over
+// ALPN. Each stream becomes an *http.Request that is forwarded upstream through
+// the same capture/interception/match-replace path as HTTP/1.1 traffic, so h2
+// clients get identical treatment. The response is written back on the same
+// stream; Interlace picks the upstream protocol independently (ForceAttemptHTTP2).
+func (p *Proxy) serveH2(conn net.Conn, authority, scheme string) {
+	srv := &http2.Server{}
+	srv.ServeConn(conn, &http2.ServeConnOpts{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if isWebSocket(r.Header) {
+				// WebSocket-over-h2 (RFC 8441) is uncommon; refuse rather than mishandle.
+				http.Error(w, "Interlace: WebSocket over HTTP/2 not supported", http.StatusNotImplemented)
+				return
+			}
+			r.URL.Scheme = scheme
+			r.URL.Host = authority
+			r.RequestURI = ""
+			resp, body, flow := p.forward(r, scheme)
+			if resp == nil {
+				http.Error(w, "Interlace upstream error: "+flow.Error, http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close()
+			for _, h := range hopByHop {
+				resp.Header.Del(h)
+			}
+			resp.Header.Del("Content-Length")
+			for k, vv := range resp.Header {
+				for _, v := range vv {
+					w.Header().Add(k, v)
+				}
+			}
+			w.WriteHeader(resp.StatusCode)
+			_, _ = w.Write(body)
+		}),
+	})
 }
 
 // bufferedConn is a net.Conn whose reads are served from a bufio.Reader that has

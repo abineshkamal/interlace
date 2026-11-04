@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"interlace/internal/repeater"
+	"interlace/internal/smuggle"
 )
 
 //go:embed rules/active.json
@@ -228,6 +229,7 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 		checkHostHeader(ctx, t, req, sender, report, &probes, &mu)
 		checkCachePoisoning(ctx, t, req, sender, report, &probes, &mu)
 		checkDeser(ctx, t, req, sender, report, &probes, &mu)
+		checkSmuggle(ctx, t, req, report, &probes, &mu)
 	}
 
 	// Resolve out-of-band checks: give callbacks a moment to arrive.
@@ -284,6 +286,25 @@ func checkDeser(ctx context.Context, t Target, req *request, sender *repeater.Se
 			})
 			return
 		}
+	}
+}
+
+// checkSmuggle runs timing-based HTTP request smuggling (CL.TE / TE.CL) probes
+// against the target. It is a request-level check (independent of insertion
+// points) and reports a High finding per technique that induced a desync delay.
+func checkSmuggle(ctx context.Context, t Target, req *request, report func(Finding), probes *int, mu *sync.Mutex) {
+	hostHdr := req.host
+	results, sent := smuggle.Detect(ctx, t.Scheme, t.Host, req.path, hostHdr)
+	mu.Lock()
+	*probes += sent
+	mu.Unlock()
+	for _, r := range results {
+		report(Finding{
+			Severity: High, Check: "http-request-smuggling", Title: "HTTP Request Smuggling (" + r.Technique + ")",
+			Detail:   "A timing probe indicates the front-end and back-end disagree on request framing (" + r.Technique + "), allowing request smuggling / desync. This can poison other users' requests, bypass front-end access controls, and capture credentials.",
+			Evidence: r.Evidence, Source: "active",
+			Key: "http-request-smuggling|" + r.Technique + "|" + t.Host + "|" + req.path,
+		})
 	}
 }
 
