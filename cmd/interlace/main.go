@@ -253,20 +253,17 @@ func serveAPI(addr, proxyAddr string, authority *ca.CA, st *store.Store, h, find
 	// AI settings: configured status + model; POST sets the API key/model.
 	mux.HandleFunc("/ai", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
-			var in struct {
-				APIKey string `json:"apiKey"`
-				Model  string `json:"model"`
-			}
+			var in ai.Config
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			if err := aiStore.SetConfig(in.APIKey, in.Model); err != nil {
+			if err := aiStore.SetConfig(in); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 		}
-		writeJSON(w, map[string]any{"configured": aiStore.Configured(), "model": aiStore.Model()})
+		writeJSON(w, aiStore.Public())
 	})
 
 	// AI-assisted triage of a finding.

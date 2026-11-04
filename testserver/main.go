@@ -219,6 +219,12 @@ func main() {
 }`)
 	})
 
+	// Mock OpenAI-compatible Chat Completions endpoint (to test AI provider-agnostic path).
+	mux.HandleFunc("/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"## Assessment\n- Likely a **true positive**.\n- Impact: data exposure.\n- Remediation: validate input and enforce authorization."}}]}`)
+	})
+
 	// A clean endpoint (no issues) to confirm the scanner doesn't false-positive.
 	mux.HandleFunc("/safe", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

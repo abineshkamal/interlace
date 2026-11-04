@@ -439,14 +439,22 @@ Host: httpbin.org
 </section>
 
 <div class="setup" id="aiModal">
-  <div class="card" style="max-width:480px">
+  <div class="card" style="max-width:520px">
     <button class="btn ghost close" id="aiClose">✕</button>
     <h2>AI-assisted triage</h2>
-    <p style="color:var(--muted);margin:2px 0 12px;font-size:12px">Uses the Anthropic API to analyze findings (true/false-positive, impact, remediation, exploit). Your API key is stored locally in the data directory and sent only to api.anthropic.com. Or set <code class="kbd">ANTHROPIC_API_KEY</code>.</p>
-    <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">API key</div>
-      <input class="tin" id="aiKey" type="password" placeholder="sk-ant-… (leave blank to keep current)" style="width:100%"></div>
+    <p style="color:var(--muted);margin:2px 0 12px;font-size:12px">Provider-agnostic — works with any AI subscription or local model. Your key is stored locally in the data directory and sent only to the endpoint you configure.</p>
+    <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">Provider / API format</div>
+      <select class="tin" id="aiProvider" style="width:100%">
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="openai">OpenAI-compatible (OpenAI, Azure, Gemini, Groq, OpenRouter, Ollama, LM Studio…)</option>
+      </select></div>
+    <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">Base URL <span style="color:var(--muted)">(optional — for Azure/Gemini/local/custom endpoints)</span></div>
+      <input class="tin" id="aiBase" placeholder="" style="width:100%"></div>
     <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">Model</div>
-      <input class="tin" id="aiModel" placeholder="claude-opus-5-5" style="width:100%"></div>
+      <input class="tin" id="aiModel" placeholder="" style="width:100%"></div>
+    <div style="margin:8px 0"><div style="color:var(--accent2);font-size:12px;margin-bottom:4px">API key <span style="color:var(--muted)">(blank to keep current; not needed for keyless local models)</span></div>
+      <input class="tin" id="aiKey" type="password" placeholder="••••••••" style="width:100%"></div>
+    <div id="aiHint" style="color:var(--muted);font:11px var(--mono);margin:6px 0"></div>
     <div id="aiStatus" style="color:var(--muted);font:12px var(--mono);margin:8px 0"></div>
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px">
       <button class="btn" id="aiCancel">Cancel</button><button class="btn primary" id="aiSave">Save</button>
@@ -949,19 +957,31 @@ $('#macroReplay').addEventListener('click', async ()=>{
   }catch(e){ $('#macroStatus').textContent='error'; }
 });
 
-// AI settings modal.
+// AI settings modal (provider-agnostic).
+const AI_HINTS={
+  anthropic:{model:'claude-opus-5-5', base:'(default) https://api.anthropic.com', hint:'Anthropic Messages API. Leave Base URL blank. Env: ANTHROPIC_API_KEY.'},
+  openai:{model:'gpt-4o-mini', base:'(default) https://api.openai.com/v1', hint:'OpenAI-compatible Chat Completions. Examples — OpenAI: blank · Gemini: https://generativelanguage.googleapis.com/v1beta/openai · Groq: https://api.groq.com/openai/v1 · OpenRouter: https://openrouter.ai/api/v1 · Ollama (local, no key): http://localhost:11434/v1. Env: OPENAI_API_KEY.'},
+};
+function aiApplyHints(){
+  const p=$('#aiProvider').value, h=AI_HINTS[p];
+  $('#aiBase').placeholder=h.base; $('#aiModel').placeholder=h.model; $('#aiHint').textContent=h.hint;
+}
 async function openAI(){
   try{ const s=await (await fetch('/ai')).json();
-    $('#aiModel').value=s.model||''; $('#aiStatus').textContent=s.configured?('✓ API key configured ('+s.model+')'):'No API key set.';
+    $('#aiProvider').value=s.provider||'anthropic'; $('#aiBase').value=s.baseUrl||''; $('#aiModel').value=s.model||'';
+    aiApplyHints();
+    $('#aiStatus').textContent=s.configured?('✓ configured — '+(s.provider||'anthropic')+' · '+(s.model||'default model')):'Not configured.';
     $('#aiStatus').style.color=s.configured?'var(--green)':'var(--muted)';
   }catch(e){}
   $('#aiModal').classList.add('show');
 }
+$('#aiProvider').addEventListener('change', aiApplyHints);
 $('#aiBtn').addEventListener('click', openAI);
 $('#aiClose').addEventListener('click', ()=>$('#aiModal').classList.remove('show'));
 $('#aiCancel').addEventListener('click', ()=>$('#aiModal').classList.remove('show'));
 $('#aiSave').addEventListener('click', async ()=>{
-  await fetch('/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:$('#aiKey').value,model:$('#aiModel').value.trim()})});
+  await fetch('/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    provider:$('#aiProvider').value, baseUrl:$('#aiBase').value.trim(), model:$('#aiModel').value.trim(), apiKey:$('#aiKey').value})});
   $('#aiKey').value=''; toast('AI settings saved','ok'); openAI();
 });
 // Minimal markdown → HTML (headings, bold, inline code, bullet lists).
