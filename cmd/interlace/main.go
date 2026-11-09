@@ -31,8 +31,10 @@ import (
 	"time"
 
 	"interlace/internal/ai"
+	"interlace/internal/browser"
 	"interlace/internal/ca"
 	"interlace/internal/crawler"
+	"interlace/internal/login"
 	"interlace/internal/fuzzer"
 	"interlace/internal/hub"
 	"interlace/internal/importer"
@@ -45,6 +47,7 @@ import (
 	"interlace/internal/proxy"
 	"interlace/internal/recon"
 	"interlace/internal/repeater"
+	"interlace/internal/report"
 	"interlace/internal/scanner"
 	"interlace/internal/scheduler"
 	"interlace/internal/scope"
@@ -63,6 +66,10 @@ var reportTmplSrc string
 const version = "0.1.0"
 
 var reportTmpl = template.Must(template.New("report").Parse(reportTmplSrc))
+
+// shotWorkDir is where the headless browser writes temporary profiles and
+// screenshot files; set from the data dir in main() to keep off a full C: drive.
+var shotWorkDir string
 
 func main() {
 	// Headless CLI scan mode for CI pipelines: `interlace scan <url> [flags]`.
@@ -97,6 +104,8 @@ func main() {
 		log.Fatalf("open store: %v", err)
 	}
 	defer st.Close()
+
+	shotWorkDir = filepath.Join(*dataDir, "shots-tmp")
 
 	h := hub.New()          // live flows
 	findHub := hub.New()    // live findings
@@ -1211,6 +1220,79 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, fs)
 	})
 
+	// Automated pentest: run a full engagement, streaming NDJSON progress.
+	mux.HandleFunc("/pentest/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+		var cfg engagementReq
+		if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+			http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		u, err := url.Parse(cfg.Target)
+		if err != nil || u.Host == "" {
+			http.Error(w, "invalid target URL", http.StatusBadRequest)
+			return
+		}
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-cache")
+		enc := json.NewEncoder(w)
+		var mu sync.Mutex
+		emit := func(p any) { mu.Lock(); _ = enc.Encode(p); flusher.Flush(); mu.Unlock() }
+
+		authMode := cfg.AuthMode
+		if authMode == "" {
+			authMode = "none"
+		}
+		engID, _ := st.StartEngagement(cfg.Target, authMode)
+		emit(map[string]any{"phase": "start", "msg": "engagement started", "engagementId": engID})
+
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
+		defer cancel()
+		pages, endpoints, findings := runEngagement(ctx, cfg, st, sc, rep, sess, oobSrv, findHub, notifier, insecure, processFlow, emit)
+
+		status := "completed"
+		if ctx.Err() != nil {
+			status = "cancelled"
+		}
+		_ = st.FinishEngagement(engID, status, pages, endpoints, findings)
+		emit(map[string]any{"phase": "done", "done": true, "status": status,
+			"pages": pages, "endpoints": endpoints, "findings": findings})
+	})
+
+	// Past engagements.
+	mux.HandleFunc("/pentest/history", func(w http.ResponseWriter, r *http.Request) {
+		es, err := st.ListEngagements()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if es == nil {
+			es = []store.Engagement{}
+		}
+		writeJSON(w, es)
+	})
+
+	// Screenshot evidence for a finding (PNG).
+	mux.HandleFunc("/finding/screenshot", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		png, err := st.FindingScreenshot(id)
+		if err != nil || len(png) == 0 {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "max-age=60")
+		_, _ = w.Write(png)
+	})
+
 	// Live findings stream (SSE).
 	mux.HandleFunc("/findings/events", func(w http.ResponseWriter, r *http.Request) {
 		sseStream(w, r, findHub)
@@ -1498,6 +1580,41 @@ Provide, in concise markdown (under 250 words):
 			}
 			writeJSON(w, buildSARIF(findings))
 			return
+		case "pdf", "docx", "xlsx":
+			ev, err := st.ListFindingsWithEvidence()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			rep := report.Report{Target: reportTarget(ev), Generated: time.Now()}
+			for _, f := range ev {
+				rep.Findings = append(rep.Findings, report.Finding{
+					Severity: f.Severity, Title: f.Title, Host: f.Host, URL: f.URL, Check: f.Check,
+					Detail: f.Detail, Evidence: f.Evidence, Note: f.Note,
+					ReqRaw: f.ReqRaw, RespRaw: f.RespRaw, Screenshot: f.Screenshot,
+				})
+			}
+			var out []byte
+			var ctype, fname string
+			switch r.URL.Query().Get("format") {
+			case "pdf":
+				out, err = rep.PDF()
+				ctype, fname = "application/pdf", "interlace-report.pdf"
+			case "xlsx":
+				out, err = rep.XLSX()
+				ctype, fname = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "interlace-report.xlsx"
+			case "docx":
+				out, err = rep.DOCX()
+				ctype, fname = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "interlace-report.docx"
+			}
+			if err != nil {
+				http.Error(w, "render "+r.URL.Query().Get("format")+": "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", ctype)
+			w.Header().Set("Content-Disposition", `attachment; filename="`+fname+`"`)
+			_, _ = w.Write(out)
+			return
 		}
 
 		// Group findings by host and attach remediation guidance.
@@ -1611,6 +1728,30 @@ func sseStream(w http.ResponseWriter, r *http.Request, h *hub.Hub) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// reportTarget derives a human-readable target label from the findings' hosts
+// (the most frequently occurring host, or a count when several are present).
+func reportTarget(ev []store.FindingEvidence) string {
+	counts := map[string]int{}
+	for _, f := range ev {
+		if f.Host != "" {
+			counts[f.Host]++
+		}
+	}
+	best, bestN := "", 0
+	for h, n := range counts {
+		if n > bestN {
+			best, bestN = h, n
+		}
+	}
+	if best == "" {
+		return "(no findings)"
+	}
+	if len(counts) > 1 {
+		return fmt.Sprintf("%s (+%d more host(s))", best, len(counts)-1)
+	}
+	return best
 }
 
 // parseJSONStringArray extracts the first JSON array of strings from s, tolerating
@@ -1890,6 +2031,9 @@ func scanAllInScope(ctx context.Context, st *store.Store, sc *scope.Scope, rep *
 			func(f scanner.Finding) {
 				f.FlowID = full.ID
 				f.Host = scanner.HostOf(authorityOf(full))
+				if f.URL == "" {
+					f.URL = full.URL
+				}
 				f.Time = time.Now()
 				id, inserted, err := st.InsertFinding(&f)
 				if err == nil && inserted {
@@ -1906,6 +2050,322 @@ func scanAllInScope(ctx context.Context, st *store.Store, sc *scope.Scope, rep *
 		}
 	}
 	return len(targets), found
+}
+
+// scanDiscoveredForms finds HTML forms in captured in-scope pages, submits each
+// with placeholder values to create parameterized requests, and runs the active
+// scanner against them. This reaches form-driven parameters (search boxes, login
+// and feedback forms, etc.) that a link-only crawl never exercises. Returns the
+// number of findings recorded.
+func scanDiscoveredForms(ctx context.Context, st *store.Store, sc *scope.Scope, rep *repeater.Sender,
+	oobSrv *oob.Server, findHub *hub.Hub, notifier *notify.Notifier, emit func(any)) int {
+
+	flows, _ := st.List(store.ListOpts{Limit: 1000})
+	seenForm := map[string]bool{}
+	found, submitted := 0, 0
+
+	for _, fl := range flows {
+		if ctx.Err() != nil || submitted >= 80 {
+			break
+		}
+		if !sc.InScope(fl.Host) || !strings.Contains(strings.ToLower(fl.ContentType), "html") {
+			continue
+		}
+		full, _ := st.Get(fl.ID)
+		if full == nil {
+			continue
+		}
+		decompressFlow(full)
+		for _, form := range login.ExtractForms(string(full.RespBody), full.URL) {
+			if ctx.Err() != nil || submitted >= 80 {
+				break
+			}
+			au, err := url.Parse(form.Action)
+			if err != nil || au.Host == "" || !sc.InScope(au.Hostname()) {
+				continue
+			}
+			key := form.Method + " " + au.Host + au.Path
+			if seenForm[key] {
+				continue
+			}
+			seenForm[key] = true
+
+			var raw string
+			if form.Method == "POST" {
+				raw = "POST " + reqURIOf(au) + " HTTP/1.1\r\nHost: " + au.Host +
+					"\r\nContent-Type: application/x-www-form-urlencoded\r\n\r\n" + form.Values.Encode()
+			} else {
+				q := au.Query()
+				for k := range form.Values {
+					q.Set(k, form.Values.Get(k))
+				}
+				uri := au.Path
+				if enc := q.Encode(); enc != "" {
+					uri += "?" + enc
+				}
+				raw = "GET " + uri + " HTTP/1.1\r\nHost: " + au.Host + "\r\n\r\n"
+			}
+			submitted++
+			authority := au.Host
+			_, _ = scanner.RunActive(ctx,
+				scanner.Target{Scheme: au.Scheme, Host: authority, Raw: raw}, rep, oobSrv,
+				func(f scanner.Finding) {
+					if f.URL == "" {
+						f.URL = form.Action
+					}
+					f.Host = scanner.HostOf(authority)
+					f.Time = time.Now()
+					if id, inserted, err := st.InsertFinding(&f); err == nil && inserted {
+						f.ID = id
+						if msg, e := json.Marshal(f); e == nil {
+							findHub.Broadcast(msg)
+						}
+						notifier.Notify(f)
+						found++
+					}
+				})
+			emit(map[string]any{"phase": "forms", "submitted": submitted, "form": form.Method + " " + au.Path, "findings": found})
+		}
+	}
+	return found
+}
+
+// reqURIOf returns the path plus raw query for a parsed URL (default "/").
+func reqURIOf(u *url.URL) string {
+	uri := u.Path
+	if uri == "" {
+		uri = "/"
+	}
+	if u.RawQuery != "" {
+		uri += "?" + u.RawQuery
+	}
+	return uri
+}
+
+// engagementReq is the automated-pentest configuration posted by the UI.
+type engagementReq struct {
+	Target       string `json:"target"`
+	MaxPages     int    `json:"maxPages"`
+	Screenshot   bool   `json:"screenshot"`
+	AuthMode     string `json:"authMode"` // "none" | "form"
+	LoginURL     string `json:"loginUrl"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	UserField    string `json:"userField"`
+	PassField    string `json:"passField"`
+	SuccessRegex string `json:"successRegex"`
+}
+
+// runEngagement drives a full automated assessment: optional form login, crawl,
+// active scan of everything in scope, a bounded authz sweep when authenticated,
+// and screenshot evidence capture. Progress is streamed via emit. It returns the
+// pages crawled, endpoints scanned and findings recorded.
+func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *scope.Scope,
+	rep *repeater.Sender, sess *session.Session, oobSrv *oob.Server, findHub *hub.Hub,
+	notifier *notify.Notifier, insecure bool, processFlow func(*model.Flow), emit func(any)) (int, int, int) {
+
+	phase := func(p, msg string) { emit(map[string]any{"phase": p, "msg": msg}) }
+
+	u, err := url.Parse(cfg.Target)
+	if err != nil || u.Host == "" {
+		phase("error", "invalid target URL")
+		return 0, 0, 0
+	}
+	host := u.Hostname()
+
+	// Ensure the target host is in scope (merge, don't clobber the user's scope).
+	inc, exc := sc.Get()
+	found := false
+	for _, h := range inc {
+		if strings.EqualFold(h, host) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		_ = sc.Set(append(inc, host), exc)
+	}
+	phase("scope", "target in scope: "+host)
+
+	// Optional authenticated login.
+	authed := false
+	if cfg.AuthMode == "form" {
+		phase("login", "logging in at "+cfg.LoginURL)
+		res, lerr := login.Perform(ctx, login.Config{
+			LoginURL: cfg.LoginURL, Username: cfg.Username, Password: cfg.Password,
+			UserField: cfg.UserField, PassField: cfg.PassField,
+			SuccessRegex: cfg.SuccessRegex, Insecure: insecure,
+		})
+		switch {
+		case lerr != nil:
+			phase("login", "login error: "+lerr.Error()+" — continuing unauthenticated")
+		case res.OK:
+			_ = sess.Set([]session.Header{{Name: "Cookie", Value: res.CookieHeader}})
+			authed = true
+			phase("login", "authenticated ✓ ("+res.Detail+")")
+		default:
+			phase("login", "login failed: "+res.Detail+" — continuing unauthenticated")
+		}
+	}
+
+	// Crawl the target.
+	maxPages := cfg.MaxPages
+	if maxPages <= 0 || maxPages > 500 {
+		maxPages = 150
+	}
+	phase("crawl", fmt.Sprintf("crawling %s (up to %d pages)", cfg.Target, maxPages))
+	pages, _ := crawler.Crawl(ctx, crawler.Seed{URL: cfg.Target}, insecure, sc.InScope,
+		processFlow, func(pr crawler.Progress) {
+			emit(map[string]any{"phase": "crawl", "url": pr.URL, "status": pr.Status})
+		}, maxPages, sess)
+	phase("crawl", fmt.Sprintf("crawled %d page(s)", pages))
+
+	// Active scan everything in scope.
+	phase("scan", "active scanning discovered endpoints")
+	endpoints, findings := scanAllInScope(ctx, st, sc, rep, oobSrv, findHub, notifier, func(p any) {
+		if m, ok := p.(map[string]any); ok {
+			m["phase"] = "scan"
+			emit(m)
+		}
+	})
+	phase("scan", fmt.Sprintf("scanned %d endpoint(s), %d finding(s) so far", endpoints, findings))
+
+	// Submit discovered forms to reach form-driven parameters a link crawl misses.
+	if ctx.Err() == nil {
+		phase("forms", "submitting discovered forms to test their parameters")
+		ff := scanDiscoveredForms(ctx, st, sc, rep, oobSrv, findHub, notifier, emit)
+		findings += ff
+		phase("forms", fmt.Sprintf("form testing added %d finding(s)", ff))
+	}
+
+	// Bounded authorization sweep (only meaningful when authenticated).
+	if authed && ctx.Err() == nil {
+		phase("authz", "testing access control on authenticated requests")
+		findings += authzSweep(ctx, st, sc, insecure, findHub, notifier)
+	}
+
+	// Screenshot evidence.
+	if cfg.Screenshot && ctx.Err() == nil {
+		if !browser.Available() {
+			phase("evidence", "no headless browser found — skipping screenshots")
+		} else {
+			n := captureEvidence(ctx, st, host, func(done, total int) {
+				emit(map[string]any{"phase": "evidence", "shots": done, "total": total})
+			})
+			phase("evidence", fmt.Sprintf("captured %d screenshot(s)", n))
+		}
+	}
+
+	return pages, endpoints, findings
+}
+
+// authzSweep replays a bounded sample of in-scope authenticated requests with
+// auth headers stripped; equivalent responses indicate broken access control.
+func authzSweep(ctx context.Context, st *store.Store, sc *scope.Scope, insecure bool,
+	findHub *hub.Hub, notifier *notify.Notifier) int {
+	flows, _ := st.List(store.ListOpts{Limit: 1000})
+	sender := repeater.New(insecure) // no session applied
+	seen := map[string]bool{}
+	found, tested := 0, 0
+	for _, t := range flows {
+		if tested >= 15 || ctx.Err() != nil {
+			break
+		}
+		if !sc.InScope(t.Host) {
+			continue
+		}
+		key := t.Host + "|" + strings.Split(t.Path, "?")[0]
+		if seen[key] {
+			continue
+		}
+		full, _ := st.Get(t.ID)
+		if full == nil {
+			continue
+		}
+		raw := flowToRaw(full)
+		if !strings.Contains(strings.ToLower(raw), "cookie:") && !strings.Contains(strings.ToLower(raw), "authorization:") {
+			continue // nothing to strip; not an authenticated request
+		}
+		seen[key] = true
+		tested++
+		authority := authorityOf(full)
+		orig := sender.Send(ctx, repeater.Request{Scheme: full.Scheme, Host: authority, Raw: raw})
+		unauth := sender.Send(ctx, repeater.Request{Scheme: full.Scheme, Host: authority, Raw: stripAuthHeaders(raw)})
+		v := authzVerdict(orig, unauth)
+		if vv, _ := v["verdict"].(string); vv == "bypassed" {
+			fnd := scanner.Finding{
+				Severity: scanner.High, Check: "broken-access-control", Source: "active",
+				Title:  "Broken access control / IDOR",
+				Detail: "An authenticated resource returned an equivalent response with authentication removed, indicating authorization is not enforced.",
+				Evidence: fmt.Sprintf("original=%d bytes (HTTP %d), unauthenticated response equivalent", orig.BodyLen, orig.Status),
+				Host:     scanner.HostOf(authority), URL: full.URL, FlowID: full.ID, Time: time.Now(),
+				Key: "broken-access-control|" + scanner.HostOf(authority) + "|" + strings.Split(full.Path, "?")[0],
+			}
+			if id, inserted, _ := st.InsertFinding(&fnd); inserted {
+				fnd.ID = id
+				if msg, e := json.Marshal(fnd); e == nil {
+					findHub.Broadcast(msg)
+				}
+				notifier.Notify(fnd)
+				found++
+			}
+		}
+	}
+	return found
+}
+
+// captureEvidence screenshots the affected URL for each finding on host (deduped
+// by URL, capped), and stores the screenshot plus request/response evidence.
+func captureEvidence(ctx context.Context, st *store.Store, host string, progress func(done, total int)) int {
+	findings, _ := st.ListFindings()
+	type job struct {
+		id    int64
+		flow  int64
+		url   string
+	}
+	var jobs []job
+	seen := map[string]bool{}
+	for _, f := range findings {
+		if f.Host != host && !strings.Contains(f.Host, host) {
+			continue
+		}
+		if f.FlowID == 0 || seen[f.URL] {
+			continue
+		}
+		fl, _ := st.Get(f.FlowID)
+		if fl == nil || fl.URL == "" {
+			continue
+		}
+		seen[f.URL] = true
+		jobs = append(jobs, job{f.ID, f.FlowID, fl.URL})
+		if len(jobs) >= 40 {
+			break
+		}
+	}
+	done := 0
+	for _, j := range jobs {
+		if ctx.Err() != nil {
+			break
+		}
+		png, err := browser.Screenshot(ctx, j.url, shotWorkDir, "")
+		var reqRaw, respRaw string
+		if fl, _ := st.Get(j.flow); fl != nil {
+			decompressFlow(fl)
+			reqRaw = flowToRaw(fl)
+			respRaw = string(fl.RespBody)
+			if len(respRaw) > 4000 {
+				respRaw = respRaw[:4000] + "\n…(truncated)"
+			}
+		}
+		if err == nil {
+			_ = st.SetFindingEvidence(j.id, reqRaw, respRaw, png)
+			done++
+		} else {
+			_ = st.SetFindingEvidence(j.id, reqRaw, respRaw, nil)
+		}
+		progress(done, len(jobs))
+	}
+	return done
 }
 
 // authorityOf returns the host:port for a flow, preferring the full authority

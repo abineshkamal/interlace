@@ -89,6 +89,7 @@
   .rbar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg2);border-bottom:1px solid var(--line)}
   .rbar .tin.host{flex:1}
   .rlabel{padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:flex;gap:8px;align-items:center}
+  .pl{display:block;font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:0 0 4px}
   .rlabel .badge{margin-left:auto;font-weight:600;text-transform:none;letter-spacing:0}
   textarea.req{flex:1;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:12px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto}
   .rresp{flex:1;overflow:auto;margin:0;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:#cfd6e4}
@@ -186,6 +187,7 @@
     <button id="nav-target" data-view="target">Target</button>
     <button id="nav-repeater" data-view="repeater">Repeater</button>
     <button id="nav-fuzzer" data-view="fuzzer">Fuzzer</button>
+    <button id="nav-pentest" data-view="pentest">Pentest</button>
     <button id="nav-issues" data-view="issues">Issues <span class="navbadge" id="issuesBadge" style="display:none">0</span></button>
     <button id="nav-oob" data-view="oob">OOB <span class="navbadge" id="oobBadge" style="display:none;background:var(--accent2);color:#06202a">0</span></button>
     <button id="nav-ws" data-view="ws">WS <span class="navbadge" id="wsBadge" style="display:none;background:var(--blue);color:#06202a">0</span></button>
@@ -237,6 +239,54 @@
   </div>
 </section>
 
+<!-- PENTEST VIEW -->
+<section class="view" id="view-pentest">
+  <div style="display:flex;gap:16px;height:100%;min-height:0">
+    <div style="width:380px;flex-shrink:0;overflow:auto;padding:4px 2px">
+      <h2 style="margin:0 0 4px">Automated Pentest</h2>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 14px">Point at an <b>authorized</b> target. Interlace will crawl it, run every applicable active check, test access control, capture screenshot evidence, and build a report.</p>
+      <label class="pl">Target URL</label>
+      <input class="tin" id="ptTarget" placeholder="http://testfire.net/" style="width:100%;margin-bottom:10px">
+      <label class="pl">Authentication</label>
+      <select class="tin" id="ptAuth" style="width:100%;margin-bottom:8px">
+        <option value="none">None (unauthenticated)</option>
+        <option value="form">Username &amp; password (form login)</option>
+      </select>
+      <div id="ptAuthFields" style="display:none;border-left:2px solid var(--line);padding-left:10px;margin-bottom:10px">
+        <input class="tin" id="ptLoginUrl" placeholder="Login page URL" style="width:100%;margin-bottom:6px">
+        <input class="tin" id="ptUser" placeholder="Username" style="width:100%;margin-bottom:6px">
+        <input class="tin" id="ptPass" type="password" placeholder="Password" style="width:100%;margin-bottom:6px">
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input class="tin" id="ptUserField" placeholder="username field (optional)" style="flex:1">
+          <input class="tin" id="ptPassField" placeholder="password field (optional)" style="flex:1">
+        </div>
+        <input class="tin" id="ptSuccess" placeholder="success text/regex (optional)" style="width:100%">
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+        <label class="pl" style="margin:0">Crawl pages</label>
+        <input class="tin" id="ptPages" type="number" value="150" min="1" max="500" style="width:80px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-left:auto"><input type="checkbox" id="ptShot" checked> Screenshots</label>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn primary" id="ptRun" style="flex:1">▶ Run pentest</button>
+        <button class="btn" id="ptStop" style="display:none">Stop</button>
+      </div>
+      <div style="margin-top:14px;display:flex;flex-wrap:wrap;gap:6px">
+        <span class="pl" style="width:100%">Download report</span>
+        <button class="btn" id="ptHtml">HTML</button>
+        <button class="btn" id="ptPdf">PDF</button>
+        <button class="btn" id="ptDocx">Word</button>
+        <button class="btn" id="ptXlsx">Excel</button>
+      </div>
+      <div id="ptHistory" style="margin-top:16px"></div>
+    </div>
+    <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+      <div class="rlabel">Progress <span id="ptStatus" style="color:var(--muted)"></span></div>
+      <pre id="ptLog" class="rresp" style="flex:1;overflow:auto;margin:0;white-space:pre-wrap">Configure a target and click Run. Live progress appears here.</pre>
+    </div>
+  </div>
+</section>
+
 <!-- ISSUES VIEW -->
 <section class="view" id="view-issues">
   <div class="issues" style="flex-direction:column">
@@ -247,6 +297,9 @@
         <button class="btn" id="scheduleBtn">⏱ Schedule</button>
         <button class="btn" id="scanAllBtn">⚡ Scan all in-scope</button>
         <button class="btn" id="reportBtn">HTML report</button>
+        <button class="btn" id="reportPdfBtn" title="Download PDF report">PDF</button>
+        <button class="btn" id="reportDocxBtn" title="Download Word report">Word</button>
+        <button class="btn" id="reportXlsxBtn" title="Download Excel report">Excel</button>
         <button class="btn" id="reportJsonBtn" title="Download JSON">JSON</button>
         <button class="btn" id="reportSarifBtn" title="Download SARIF for CI / GitHub code scanning">SARIF</button>
       </span>
@@ -906,6 +959,8 @@ function showFinding(id, node){
     <div class="body">
       <p>${esc(f.detail)}</p>
       ${f.evidence?`<div class="evid">${esc(f.evidence)}</div>`:''}
+      <img id="findShot" src="/finding/screenshot?id=${f.id}" alt="" style="display:none;max-width:100%;margin-top:10px;border:1px solid var(--line);border-radius:6px" onload="this.style.display='block'" onerror="this.remove()">
+      <div id="findShotCap" style="display:none"></div>
       <div class="vflow" style="display:flex;gap:8px">
         ${f.flowId?`<button class="btn" id="viewFlow">View request #${f.flowId}</button>`:''}
         <button class="btn primary" id="aiTriageBtn">🤖 Analyze with AI</button>
@@ -1160,6 +1215,58 @@ $('#aiSummaryBtn').addEventListener('click', async ()=>{
 $('#reportBtn').addEventListener('click', ()=>window.open('/report','_blank'));
 $('#reportJsonBtn').addEventListener('click', ()=>window.location='/report?format=json&dl=1');
 $('#reportSarifBtn').addEventListener('click', ()=>window.location='/report?format=sarif&dl=1');
+$('#reportPdfBtn').addEventListener('click', ()=>window.location='/report?format=pdf');
+$('#reportDocxBtn').addEventListener('click', ()=>window.location='/report?format=docx');
+$('#reportXlsxBtn').addEventListener('click', ()=>window.location='/report?format=xlsx');
+
+/* ---------- Automated Pentest ---------- */
+$('#ptAuth').addEventListener('change', e=>{ $('#ptAuthFields').style.display = e.target.value==='form'?'block':'none'; });
+$('#ptHtml').addEventListener('click', ()=>window.open('/report','_blank'));
+$('#ptPdf').addEventListener('click', ()=>window.location='/report?format=pdf');
+$('#ptDocx').addEventListener('click', ()=>window.location='/report?format=docx');
+$('#ptXlsx').addEventListener('click', ()=>window.location='/report?format=xlsx');
+let ptController=null;
+function ptAppend(line){ const el=$('#ptLog'); const atBottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20; el.textContent+='\n'+line; if(atBottom) el.scrollTop=el.scrollHeight; }
+function ptEvent(ev){
+  if(ev.phase==='error'){ ptAppend('✗ '+ev.msg); return; }
+  if(ev.phase==='crawl' && ev.url){ ptAppend('  crawl: '+(ev.status||'')+' '+ev.url); return; }
+  if(ev.phase==='scan' && ev.scanned){ ptAppend('  scan: '+ev.scanned+'/'+ev.total+' '+(ev.host||'')+(ev.path||'')+' ('+ev.findings+' findings)'); return; }
+  if(ev.phase==='forms' && ev.submitted){ ptAppend('  form: '+ev.form+' ('+ev.findings+' findings)'); return; }
+  if(ev.phase==='evidence' && ev.shots!==undefined){ $('#ptStatus').textContent='capturing evidence '+ev.shots+'/'+ev.total; return; }
+  if(ev.msg){ ptAppend('▸ ['+ (ev.phase||'') +'] '+ev.msg); }
+  if(ev.done){ ptAppend('\n✔ '+ev.status+' — '+ev.pages+' pages, '+ev.endpoints+' endpoints, '+ev.findings+' findings'); }
+}
+async function ptRun(){
+  const target=$('#ptTarget').value.trim();
+  if(!target){ toast('Enter a target URL','warn'); return; }
+  const body={ target, maxPages:parseInt($('#ptPages').value)||150, screenshot:$('#ptShot').checked,
+    authMode:$('#ptAuth').value, loginUrl:$('#ptLoginUrl').value.trim(), username:$('#ptUser').value,
+    password:$('#ptPass').value, userField:$('#ptUserField').value.trim(), passField:$('#ptPassField').value.trim(),
+    successRegex:$('#ptSuccess').value.trim() };
+  $('#ptLog').textContent='Starting engagement…';
+  $('#ptRun').style.display='none'; $('#ptStop').style.display=''; $('#ptStatus').textContent='running';
+  ptController=new AbortController();
+  try{
+    const r=await fetch('/pentest/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:ptController.signal});
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){ const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); let i;
+      while((i=buf.indexOf('\n'))>=0){ const line=buf.slice(0,i); buf=buf.slice(i+1); if(line.trim()){ try{ ptEvent(JSON.parse(line)); }catch(e){} } }
+    }
+  }catch(e){ if(e.name!=='AbortError') ptAppend('✗ '+e); }
+  $('#ptRun').style.display=''; $('#ptStop').style.display='none'; $('#ptStatus').textContent='';
+  loadFindings(); ptLoadHistory();
+}
+$('#ptRun').addEventListener('click', ptRun);
+$('#ptStop').addEventListener('click', ()=>{ if(ptController) ptController.abort(); ptAppend('— stopped by user —'); });
+async function ptLoadHistory(){
+  try{ const es=await (await fetch('/pentest/history')).json();
+    if(!es.length){ $('#ptHistory').innerHTML=''; return; }
+    $('#ptHistory').innerHTML='<span class="pl">Past runs</span>'+es.slice(0,8).map(e=>
+      `<div style="font:11px var(--mono);color:var(--muted);padding:3px 0;border-top:1px solid var(--line)">${esc(e.target)} · ${e.status} · ${e.findings} findings</div>`).join('');
+  }catch(e){}
+}
+document.querySelector('#nav-pentest').addEventListener('click', ptLoadHistory);
 $('#scanAllBtn').addEventListener('click', scanAll);
 async function scanAll(){
   const btn=$('#scanAllBtn'); btn.disabled=true; const orig=btn.textContent;

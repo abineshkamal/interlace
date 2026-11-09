@@ -20,6 +20,15 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 - ✅ **AI natural-language target selection** ("scan all login endpoints" → picks endpoints, adds hosts to scope)
 - ✅ **Authorization testing** (Autorize-style broken-access-control / IDOR), **analyst notes on findings**
 
+**Automated pentest**
+- ✅ **One-click Automated Pentest** — target URL (+ optional username/password)
+  → crawl **+ form submission** → full active scan → bounded authz sweep →
+  screenshot evidence → report. Scope guardrail stays fail-closed.
+- ✅ **Scripted form login** (auto-detects the login form; preserves hidden/CSRF
+  fields) for authenticated scanning
+- ✅ **Screenshot evidence** via installed headless Edge/Chrome, stored on findings
+- ✅ **Reports in HTML, PDF, Word (.docx) and Excel (.xlsx)** (all pure-Go)
+
 **Integration & output**
 - ✅ HTML / JSON / **SARIF** reports (grouped by host, remediation guidance)
 - ✅ **Headless CLI scan mode** (`interlace scan <url>`) with exit codes
@@ -38,7 +47,9 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 
 ## Long-term
 
-- 🔴 Headless-browser crawling (SPA support + DOM-based XSS) — needs an embedded Chromium
+- 🔴 Authenticated-context screenshots + SSO/MFA login driving via the Chrome
+  DevTools Protocol (v1 screenshots render in an anonymous context)
+- 🔴 Headless-browser crawling (SPA support + DOM-based XSS) — builds on the CDP driver
 - 🔴 DNS-based out-of-band (requires a public domain + DNS server)
 - 🔴 Real-time multi-user collaboration (shared live session; finding notes already shared)
 

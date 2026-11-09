@@ -297,6 +297,33 @@ func main() {
 		fmt.Fprint(w, "<html>ok</html>")
 	})
 
+	// Login form + handler + protected page (for testing scripted form login).
+	mux.HandleFunc("/loginform", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><form action="/dologin" method="post">
+<input type="hidden" name="csrf" value="tok123">
+<input type="text" name="uid" placeholder="user">
+<input type="password" name="passw" placeholder="pass">
+<button type="submit">Sign in</button></form></body></html>`)
+	})
+	mux.HandleFunc("/dologin", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		w.Header().Set("Content-Type", "text/html")
+		if r.FormValue("uid") == "admin" && r.FormValue("passw") == "admin" {
+			http.SetCookie(w, &http.Cookie{Name: "authsess", Value: "ok-admin-1", Path: "/"})
+			fmt.Fprint(w, "<html><body>Welcome, admin. You are signed in.</body></html>")
+			return
+		}
+		fmt.Fprint(w, `<html><body>Invalid. <input type="password" name="passw"></body></html>`)
+	})
+	mux.HandleFunc("/account", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("authsess"); err == nil && c.Value == "ok-admin-1" {
+			fmt.Fprint(w, "<html>Account balance: $4,200.00 (acct #8842)</html>")
+			return
+		}
+		fmt.Fprint(w, "<html>Please log in.</html>")
+	})
+
 	// CSRF token page: returns an anti-CSRF token in the body (for testing the
 	// session CSRF auto-refresh feature).
 	mux.HandleFunc("/csrftoken", func(w http.ResponseWriter, r *http.Request) {

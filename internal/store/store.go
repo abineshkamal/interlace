@@ -70,6 +70,18 @@ CREATE TABLE IF NOT EXISTS saved_requests (
 	host   TEXT    NOT NULL,
 	raw    TEXT    NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS engagements (
+	id        INTEGER PRIMARY KEY AUTOINCREMENT,
+	started   INTEGER NOT NULL,
+	finished  INTEGER,
+	target    TEXT    NOT NULL,
+	auth_mode TEXT,
+	status    TEXT,
+	pages     INTEGER DEFAULT 0,
+	endpoints INTEGER DEFAULT 0,
+	findings  INTEGER DEFAULT 0
+);
 `
 
 // Store wraps the SQLite database connection.
@@ -92,12 +104,18 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	// Lightweight migration for databases created before the note column existed.
+	// Lightweight migrations for databases created before a column existed.
 	// SQLite has no "ADD COLUMN IF NOT EXISTS"; a duplicate-column error is benign.
-	if _, err := db.Exec(`ALTER TABLE findings ADD COLUMN note TEXT`); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column") {
-		db.Close()
-		return nil, fmt.Errorf("migrate findings.note: %w", err)
+	for _, col := range []string{
+		`ALTER TABLE findings ADD COLUMN note TEXT`,
+		`ALTER TABLE findings ADD COLUMN screenshot BLOB`,
+		`ALTER TABLE findings ADD COLUMN req_raw TEXT`,
+		`ALTER TABLE findings ADD COLUMN resp_raw TEXT`,
+	} {
+		if _, err := db.Exec(col); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			db.Close()
+			return nil, fmt.Errorf("migrate: %q: %w", col, err)
+		}
 	}
 	return &Store{db: db}, nil
 }
@@ -331,6 +349,114 @@ func (s *Store) ListSavedRequests() ([]SavedRequest, error) {
 func (s *Store) DeleteSavedRequest(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM saved_requests WHERE id = ?`, id)
 	return err
+}
+
+// SetFindingEvidence attaches request/response text and an optional screenshot
+// (PNG bytes) to a finding. Nil png leaves any existing screenshot untouched.
+func (s *Store) SetFindingEvidence(id int64, reqRaw, respRaw string, png []byte) error {
+	if png != nil {
+		_, err := s.db.Exec(`UPDATE findings SET req_raw=?, resp_raw=?, screenshot=? WHERE id=?`, reqRaw, respRaw, png, id)
+		return err
+	}
+	_, err := s.db.Exec(`UPDATE findings SET req_raw=?, resp_raw=? WHERE id=?`, reqRaw, respRaw, id)
+	return err
+}
+
+// FindingScreenshot returns the PNG bytes stored for a finding (nil if none).
+func (s *Store) FindingScreenshot(id int64) ([]byte, error) {
+	var png []byte
+	err := s.db.QueryRow(`SELECT screenshot FROM findings WHERE id=?`, id).Scan(&png)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return png, err
+}
+
+// FindingEvidence bundles a finding with its stored evidence for reporting.
+type FindingEvidence struct {
+	scanner.Finding
+	ReqRaw     string
+	RespRaw    string
+	Screenshot []byte
+}
+
+// ListFindingsWithEvidence returns all findings (severity-ranked) with their
+// request/response text and screenshot bytes attached, for report generation.
+func (s *Store) ListFindingsWithEvidence() ([]FindingEvidence, error) {
+	rows, err := s.db.Query(
+		`SELECT id, flow_id, ts, severity, check_slug, title, detail, host, url, evidence,
+		        COALESCE(source,'passive'), COALESCE(note,''), COALESCE(req_raw,''), COALESCE(resp_raw,''), screenshot
+		 FROM findings
+		 ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, id DESC
+		 LIMIT 5000`)
+	if err != nil {
+		return nil, fmt.Errorf("list findings evidence: %w", err)
+	}
+	defer rows.Close()
+	var out []FindingEvidence
+	for rows.Next() {
+		var fe FindingEvidence
+		var tsMilli int64
+		if err := rows.Scan(&fe.ID, &fe.FlowID, &tsMilli, &fe.Severity, &fe.Check, &fe.Title,
+			&fe.Detail, &fe.Host, &fe.URL, &fe.Evidence, &fe.Source, &fe.Note,
+			&fe.ReqRaw, &fe.RespRaw, &fe.Screenshot); err != nil {
+			return nil, fmt.Errorf("scan finding evidence: %w", err)
+		}
+		fe.Time = time.UnixMilli(tsMilli)
+		out = append(out, fe)
+	}
+	return out, rows.Err()
+}
+
+// Engagement is one automated-pentest run's metadata.
+type Engagement struct {
+	ID        int64  `json:"id"`
+	Started   int64  `json:"started"`
+	Finished  int64  `json:"finished"`
+	Target    string `json:"target"`
+	AuthMode  string `json:"authMode"`
+	Status    string `json:"status"`
+	Pages     int    `json:"pages"`
+	Endpoints int    `json:"endpoints"`
+	Findings  int    `json:"findings"`
+}
+
+// StartEngagement records the beginning of a run and returns its ID.
+func (s *Store) StartEngagement(target, authMode string) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO engagements (started, target, auth_mode, status) VALUES (?,?,?,?)`,
+		time.Now().UnixMilli(), target, authMode, "running")
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// FinishEngagement records the outcome of a run.
+func (s *Store) FinishEngagement(id int64, status string, pages, endpoints, findings int) error {
+	_, err := s.db.Exec(
+		`UPDATE engagements SET finished=?, status=?, pages=?, endpoints=?, findings=? WHERE id=?`,
+		time.Now().UnixMilli(), status, pages, endpoints, findings, id)
+	return err
+}
+
+// ListEngagements returns past runs, newest first.
+func (s *Store) ListEngagements() ([]Engagement, error) {
+	rows, err := s.db.Query(`SELECT id, started, COALESCE(finished,0), target, COALESCE(auth_mode,''),
+		COALESCE(status,''), pages, endpoints, findings FROM engagements ORDER BY id DESC LIMIT 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Engagement
+	for rows.Next() {
+		var e Engagement
+		if err := rows.Scan(&e.ID, &e.Started, &e.Finished, &e.Target, &e.AuthMode,
+			&e.Status, &e.Pages, &e.Endpoints, &e.Findings); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // CountFindings returns the total number of findings.

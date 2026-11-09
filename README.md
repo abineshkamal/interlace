@@ -18,6 +18,14 @@ serves its entire UI from a browser — no JVM, no external services.
   (sniper / pitchfork / cluster-bomb, payload processing, grep-match/extract)
 - **Target** site map, **Match & Replace**, **Decoder**, **Comparer**, **JWT** editor/attacker
 
+**Automated pentest**
+- **One-click Automated Pentest** — give it a target URL (and optionally a
+  username/password); it crawls, submits forms, runs every active check, tests
+  access control, captures screenshot evidence, and writes a report
+- **Reports** in **HTML, PDF, Word (.docx) and Excel (.xlsx)** with screenshots
+  embedded in the PDF
+- **Screenshot evidence** via the installed headless Edge/Chrome (no bundled browser)
+
 **Automation**
 - **Passive scanner** — security headers, cookie flags, CORS, mixed content,
   exposed secrets (API keys, tokens, private keys), weak JWTs
