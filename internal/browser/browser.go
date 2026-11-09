@@ -16,9 +16,25 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
+
+// tempEnv returns env with any existing TEMP/TMP/TMPDIR entries removed, so the
+// caller's appended overrides are authoritative. btmp is accepted for symmetry
+// but the overrides themselves are appended by the caller.
+func tempEnv(env []string, _ string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		up := strings.ToUpper(kv)
+		if strings.HasPrefix(up, "TEMP=") || strings.HasPrefix(up, "TMP=") || strings.HasPrefix(up, "TMPDIR=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
 
 // candidatePaths lists where Edge/Chrome usually live on Windows, plus bare
 // names resolved via PATH for other platforms.
@@ -76,8 +92,13 @@ func Screenshot(ctx context.Context, url, workDir, cookieHeader string) ([]byte,
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 10) + "-" + strconv.FormatInt(n, 10)
 	outPath := filepath.Join(workDir, "shot-"+stamp+".png")
 	profile := filepath.Join(workDir, "profile-"+stamp)
+	// A dedicated temp dir for the browser child, so its cache, crash dumps and
+	// OS temp files land here (on a drive with space) instead of the system drive.
+	btmp := filepath.Join(workDir, "tmp-"+stamp)
+	_ = os.MkdirAll(btmp, 0o700)
 	defer os.Remove(outPath)
 	defer os.RemoveAll(profile)
+	defer os.RemoveAll(btmp)
 
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -93,10 +114,20 @@ func Screenshot(ctx context.Context, url, workDir, cookieHeader string) ([]byte,
 		"--window-size=1280,900",
 		"--virtual-time-budget=5000",
 		"--user-data-dir=" + profile,
+		"--disk-cache-dir=" + filepath.Join(btmp, "cache"),
+		"--crash-dumps-dir=" + filepath.Join(btmp, "crashes"),
+		"--disable-crash-reporter",
+		"--disable-breakpad",
+		"--no-crash-upload",
 		"--screenshot=" + outPath,
 		url,
 	}
 	cmd := exec.CommandContext(cctx, bin, args...)
+	// Redirect the child's OS temp dir off the system drive. Chromium still
+	// scatters crashpad/cache files into %TEMP% regardless of its flags, so we
+	// override TEMP/TMP/TMPDIR for the subprocess only (the parent is untouched).
+	cmd.Env = append(tempEnv(os.Environ(), btmp),
+		"TEMP="+btmp, "TMP="+btmp, "TMPDIR="+btmp)
 	// Best-effort: ignore non-zero exit (some builds exit 21 but still write the file).
 	_ = cmd.Run()
 
