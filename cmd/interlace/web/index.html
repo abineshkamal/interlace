@@ -1015,10 +1015,7 @@ function addFinding(f){
   findings.sort((a,b)=> (sevRank[a.severity]-sevRank[b.severity]) || (b.id-a.id));
   renderIssueList(); renderIssueSummary();
 }
-function connectFindings(){
-  const es=new EventSource('/findings/events');
-  es.onmessage=ev=>{ try{ addFinding(JSON.parse(ev.data)); }catch(e){} };
-}
+function connectFindings(){ /* handled by connectStream() */ }
 
 // Active scan a captured flow (findings stream into Issues via SSE).
 async function activeScan(f){
@@ -1525,7 +1522,7 @@ async function loadWS(){
     d.slice().reverse().forEach(m=>wsAdd(m,false));
   }catch(e){}
 }
-function connectWS(){ const es=new EventSource('/ws/events'); es.onmessage=ev=>{ try{ wsAdd(JSON.parse(ev.data), true); }catch(e){} }; }
+function connectWS(){ /* handled by connectStream() */ }
 $('#wsrSend').addEventListener('click', async ()=>{
   const body={scheme:$('#wsrScheme').value,host:$('#wsrHost').value.trim(),path:$('#wsrPath').value.trim()||'/',message:$('#wsrMsg').value};
   if(!body.host){ toast('Set the WS host','warn'); return; }
@@ -1557,7 +1554,7 @@ async function resolveWSHeld(action){ if(!wsCurrentHeld) return;
 $('#wsInterceptBtn').addEventListener('click', toggleWSIntercept);
 $('#wsInterceptForward').addEventListener('click', ()=>resolveWSHeld('forward'));
 $('#wsInterceptDrop').addEventListener('click', ()=>resolveWSHeld('drop'));
-function connectWSIntercept(){ const es=new EventSource('/wsintercept/events'); es.onmessage=()=>{ if(wsInterceptOn) refreshWSIntercept(); }; }
+function connectWSIntercept(){ /* handled by connectStream() */ }
 
 /* ---------- Interception ---------- */
 let interceptOn=false, interceptRespOn=false, heldQueue=[], currentHeld=null;
@@ -1607,7 +1604,7 @@ $('#interceptBtn').addEventListener('click', toggleIntercept);
 $('#interceptRespBtn').addEventListener('click', toggleInterceptResp);
 $('#interceptForward').addEventListener('click', ()=>resolveHeld('forward'));
 $('#interceptDrop').addEventListener('click', ()=>resolveHeld('drop'));
-function connectIntercept(){ const es=new EventSource('/intercept/events'); es.onmessage=()=>{ if(interceptOn) refreshIntercept(); }; }
+function connectIntercept(){ /* handled by connectStream() */ }
 
 /* ---------- OOB ---------- */
 let oobCount=0;
@@ -1628,7 +1625,7 @@ async function loadOOB(){
     (d.interactions||[]).forEach(i=>oobAdd(i,false));
   }catch(e){}
 }
-function connectOOB(){ const es=new EventSource('/oob/events'); es.onmessage=ev=>{ try{ oobAdd(JSON.parse(ev.data), true); }catch(e){} }; }
+function connectOOB(){ /* handled by connectStream() */ }
 $('#oobCopy').addEventListener('click', async ()=>{
   try{ const d=await (await fetch('/oob/token')).json();
     await navigator.clipboard.writeText(d.url); toast('Payload URL copied: '+d.url,'ok');
@@ -1929,13 +1926,21 @@ function sendToFuzzer(f){
 }
 fzRenderPayloads();
 
-/* ---------- SSE live stream ---------- */
-function connect(){
-  const es=new EventSource('/events');
+/* ---------- SSE live stream (single multiplexed connection) ---------- */
+// All live updates arrive over ONE EventSource as named events, so the browser
+// doesn't exhaust its ~6-connections-per-host budget on event streams (which
+// would otherwise starve every fetch() the UI makes).
+function connectStream(){
+  const es=new EventSource('/stream');
   es.onopen=()=>{ dot.classList.add('live'); connLbl.textContent='live'; };
   es.onerror=()=>{ dot.classList.remove('live'); connLbl.textContent='reconnecting…'; };
-  es.onmessage=ev=>{ try{ const f=JSON.parse(ev.data); addRow(f,true); countEl.textContent=(parseInt(countEl.textContent||'0')+1);
-    siteAdd(f); if($('#view-target').classList.contains('active')) renderSiteTree(); }catch(e){} };
+  es.addEventListener('flow', ev=>{ try{ const f=JSON.parse(ev.data); addRow(f,true); countEl.textContent=(parseInt(countEl.textContent||'0')+1);
+    siteAdd(f); if($('#view-target').classList.contains('active')) renderSiteTree(); }catch(e){} });
+  es.addEventListener('finding', ev=>{ try{ addFinding(JSON.parse(ev.data)); }catch(e){} });
+  es.addEventListener('oob', ev=>{ try{ oobAdd(JSON.parse(ev.data), true); }catch(e){} });
+  es.addEventListener('intercept', ()=>{ if(interceptOn) refreshIntercept(); });
+  es.addEventListener('ws', ev=>{ try{ wsAdd(JSON.parse(ev.data), true); }catch(e){} });
+  es.addEventListener('wsintercept', ()=>{ if(wsInterceptOn) refreshWSIntercept(); });
 }
 
 /* ---------- controls ---------- */
@@ -1985,15 +1990,16 @@ $('#setup').addEventListener('click', e=>{ if(e.target.id==='setup') $('#setup')
 /* boot */
 fetch('/config').then(r=>r.json()).then(c=>{ if(c.proxyAddr) $('#proxyAddr').textContent=c.proxyAddr; }).catch(()=>{});
 async function refreshCount(){ try{ const s=await (await fetch('/stats')).json(); countEl.textContent=s.flows; }catch(e){} }
-loadInitial(); refreshCount(); connect();
-loadFindings(); connectFindings();
-loadOOB(); connectOOB();
-loadWS(); connectWS();
+loadInitial(); refreshCount();
+loadFindings();
+loadOOB();
+loadWS();
 loadSiteMap();
 $('#nav-target').addEventListener('click', loadSiteMap);
 $('#targetScopeOnly').addEventListener('change', renderSiteTree);
-refreshIntercept(); connectIntercept();
-refreshWSIntercept(); connectWSIntercept();
+refreshIntercept();
+refreshWSIntercept();
+connectStream(); // single multiplexed SSE for all live updates
 if(location.hash==='#issues'){ $('#nav-issues').click(); }
 if(location.hash==='#target'){ $('#nav-target').click(); }
 if(location.hash==='#oob'){ $('#nav-oob').click(); }

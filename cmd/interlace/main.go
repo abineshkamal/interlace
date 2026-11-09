@@ -1754,6 +1754,16 @@ Provide, in concise markdown (under 250 words):
 		sseStream(w, r, h)
 	})
 
+	// Multiplexed SSE: all live streams over ONE connection (named events), so a
+	// browser doesn't spend its whole 6-connection-per-host budget on event
+	// streams and starve its own fetch() calls.
+	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		sseMultiStream(w, r, map[string]*hub.Hub{
+			"flow": h, "finding": findHub, "oob": oobHub,
+			"intercept": interHub, "ws": wsHub, "wsintercept": wsInterHub,
+		})
+	})
+
 	var handler http.Handler = mux
 	if authToken != "" {
 		handler = tokenAuth(authToken, mux)
@@ -1782,6 +1792,63 @@ func tokenAuth(token string, next http.Handler) http.Handler {
 
 // sseStream subscribes to a hub and relays messages to the client as SSE until
 // the client disconnects.
+// sseMultiStream fans several hubs into a single SSE response, tagging each
+// message with a named event (event: <name>) so one connection carries all live
+// updates. Clients demultiplex with es.addEventListener(name, …).
+func sseMultiStream(w http.ResponseWriter, r *http.Request, hubs map[string]*hub.Hub) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	type ev struct {
+		name string
+		msg  []byte
+	}
+	merged := make(chan ev, 256)
+	var unsubs []func()
+	for name, h := range hubs {
+		ch, unsub := h.Subscribe()
+		unsubs = append(unsubs, unsub)
+		go func(name string, ch <-chan []byte) {
+			for msg := range ch {
+				select {
+				case merged <- ev{name, msg}:
+				default: // drop if the writer can't keep up
+				}
+			}
+		}(name, ch)
+	}
+	defer func() {
+		for _, u := range unsubs {
+			u()
+		}
+	}()
+
+	fmt.Fprintf(w, ": connected\n\n")
+	flusher.Flush()
+
+	keepAlive := time.NewTicker(25 * time.Second)
+	defer keepAlive.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case e := <-merged:
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.name, e.msg)
+			flusher.Flush()
+		case <-keepAlive.C:
+			fmt.Fprintf(w, ": ping\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
 func sseStream(w http.ResponseWriter, r *http.Request, h *hub.Hub) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
