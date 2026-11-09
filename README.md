@@ -39,6 +39,10 @@ serves its entire UI from a browser — no JVM, no external services.
   CSRF token auto-refresh, and login macros
 - **AI natural-language target selection** — describe what to test and let the
   configured model pick matching endpoints from captured traffic
+- **Business Logic Advisor** — give the app's context and roles; the AI crafts
+  concrete, app-specific business-logic test cases (IDOR, price tampering,
+  workflow bypass, privilege escalation) from the real captured endpoints, each
+  openable in Repeater
 - **Crawler**, **content discovery**, **parameter mining**
 - **Scope** guardrail (fail-closed), authenticated sessions, **login macros**,
   recurring **scheduled** scans

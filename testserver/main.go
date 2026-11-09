@@ -284,8 +284,13 @@ func main() {
 		reqBody, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "application/json")
 		content := `## Assessment\n- Likely a **true positive**.\n- Impact: data exposure.\n- Remediation: validate input and enforce authorization.`
-		// For natural-language scope requests, return a JSON array of matching URLs.
-		if strings.Contains(string(reqBody), "JSON array") {
+		body := string(reqBody)
+		switch {
+		case strings.Contains(body, "BUSINESS LOGIC"):
+			// Business Logic Advisor: return a JSON array of test-case objects.
+			content = `[{\"title\":\"IDOR on account view\",\"category\":\"idor\",\"severity\":\"high\",\"endpoint\":\"GET /account\",\"rationale\":\"Account appears tied to the session; test fetching another user's account.\",\"mutation\":\"change the account id to another user's\",\"steps\":\"request /account with a different id; if another balance returns, IDOR confirmed\"},{\"title\":\"Mass assignment of role\",\"category\":\"privilege-escalation\",\"severity\":\"high\",\"endpoint\":\"POST /massassign\",\"rationale\":\"Endpoint binds the whole body; adding role/isAdmin may escalate.\",\"mutation\":\"add \\\"isAdmin\\\":true to the JSON body\",\"steps\":\"submit with isAdmin true and check if it is accepted\"}]`
+		case strings.Contains(body, "JSON array"):
+			// Natural-language scope: return a JSON array of matching URLs.
 			content = `[\"http://127.0.0.1:9000/login\", \"http://127.0.0.1:9000/admin/data\"]`
 		}
 		fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":"%s"}}]}`, content)

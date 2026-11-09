@@ -35,6 +35,7 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 - ✅ **Docker image** + **GitHub Action** (SARIF → code scanning)
 - ✅ **Webhook notifications** (Slack/Discord/generic) on findings
 - ✅ **AI-assisted triage** + **executive summary**, **provider-agnostic** (Anthropic or any OpenAI-compatible / local model), **AI-generated fuzzing payloads**
+- ✅ **Business Logic Advisor** — give the app's context + roles and the AI crafts concrete, app-specific business-logic test cases (IDOR, price tampering, workflow bypass, privilege escalation, …) from the captured endpoints, each openable in Repeater
 - ✅ **OpenAPI / Swagger / Postman import** to seed scan targets
 - ✅ **Project export/import** (single portable JSON file)
 - ✅ **Save/load Repeater requests**, **UI access token**, **save/load Fuzzer presets**, **light/dark theme toggle**

@@ -447,6 +447,99 @@ Return ONLY a JSON array of the full matching URLs (strings), no prose, no code 
 		writeJSON(w, map[string]any{"matched": matched, "hosts": hosts, "applied": applied})
 	})
 
+	// Business Logic Advisor: given a plain-English description of the app (and
+	// its roles), combine it with the captured endpoints and ask the model for
+	// concrete, app-specific business-logic test cases, each mapped to a flow.
+	mux.HandleFunc("/ai/logic", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Context string `json:"context"`
+			Roles   string `json:"roles"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(in.Context) == "" {
+			writeJSON(w, map[string]any{"error": "describe what the application does first"})
+			return
+		}
+		if !aiStore.Configured() {
+			writeJSON(w, map[string]any{"error": "configure an AI provider first (AI button)"})
+			return
+		}
+
+		// Build a de-duplicated endpoint inventory from captured traffic.
+		flows, _ := st.List(store.ListOpts{Limit: 1000})
+		byEndpoint := map[string]model.Flow{}
+		var lines []string
+		seen := map[string]bool{}
+		for _, f := range flows {
+			path := strings.Split(f.Path, "?")[0]
+			ep := strings.ToUpper(f.Method) + " " + path
+			if seen[ep] {
+				continue
+			}
+			seen[ep] = true
+			byEndpoint[ep] = f
+			params := ""
+			if i := strings.IndexByte(f.Path, '?'); i >= 0 {
+				if q, err := url.ParseQuery(f.Path[i+1:]); err == nil && len(q) > 0 {
+					keys := make([]string, 0, len(q))
+					for k := range q {
+						keys = append(keys, k)
+					}
+					params = "  params: " + strings.Join(keys, ",")
+				}
+			}
+			ct := ""
+			if f.ContentType != "" {
+				ct = "  (" + strings.Split(f.ContentType, ";")[0] + ")"
+			}
+			lines = append(lines, ep+params+ct)
+			if len(lines) >= 100 {
+				break
+			}
+		}
+		if len(lines) == 0 {
+			writeJSON(w, map[string]any{"error": "no captured endpoints yet — browse or crawl the target first"})
+			return
+		}
+
+		prompt := fmt.Sprintf(`You are a senior application security tester specializing in BUSINESS LOGIC flaws (not generic injection).
+
+Application context:
+%s
+
+Roles / privilege levels:
+%s
+
+Observed endpoints (choose "endpoint" values from THIS list exactly as written):
+%s
+
+Propose 8-15 concrete, app-specific business-logic test cases. Focus on: IDOR / tenancy, price or quantity tampering, workflow/step bypass, privilege escalation, coupon/discount abuse, quota or limit bypass, race conditions, and parameter tampering on state transitions. Avoid generic XSS/SQLi.
+
+Return ONLY a JSON array (no prose, no code fences). Each element:
+{"title":"...","category":"idor|price-tampering|workflow-bypass|privilege-escalation|coupon-abuse|quota-race|auth-bypass|other","severity":"high|medium|low","endpoint":"METHOD /path from the list, or empty","rationale":"why this is a risk given the context","mutation":"the exact change to make to the request","steps":"how to test and what result would confirm the flaw"}`,
+			in.Context, strDefault(in.Roles, "(not specified)"), strings.Join(lines, "\n"))
+
+		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		defer cancel()
+		out, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		cases := parseLogicCases(out)
+		// Map each case's endpoint to a captured flow for one-click Repeater.
+		for i := range cases {
+			if f, ok := byEndpoint[normEndpoint(cases[i].Endpoint)]; ok {
+				cases[i].FlowID = f.ID
+				cases[i].URL = f.URL
+			}
+		}
+		writeJSON(w, map[string]any{"cases": cases})
+	})
+
 	// AI-assisted triage of a finding.
 	mux.HandleFunc("/ai/triage", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -1752,6 +1845,52 @@ func reportTarget(ev []store.FindingEvidence) string {
 		return fmt.Sprintf("%s (+%d more host(s))", best, len(counts)-1)
 	}
 	return best
+}
+
+// logicCase is one AI-crafted business-logic test case.
+type logicCase struct {
+	Title     string `json:"title"`
+	Category  string `json:"category"`
+	Severity  string `json:"severity"`
+	Endpoint  string `json:"endpoint"`
+	Rationale string `json:"rationale"`
+	Mutation  string `json:"mutation"`
+	Steps     string `json:"steps"`
+	FlowID    int64  `json:"flowId"`
+	URL       string `json:"url"`
+}
+
+// parseLogicCases extracts the first JSON array of objects from the model output,
+// tolerating surrounding prose or code fences.
+func parseLogicCases(s string) []logicCase {
+	start := strings.IndexByte(s, '[')
+	end := strings.LastIndexByte(s, ']')
+	if start < 0 || end <= start {
+		return nil
+	}
+	var out []logicCase
+	if json.Unmarshal([]byte(s[start:end+1]), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+// normEndpoint normalizes a "METHOD /path" string by upper-casing only the
+// method, leaving the (case-sensitive) path intact, so it matches the keys built
+// from captured flows.
+func normEndpoint(s string) string {
+	s = strings.TrimSpace(s)
+	if parts := strings.SplitN(s, " ", 2); len(parts) == 2 {
+		return strings.ToUpper(parts[0]) + " " + parts[1]
+	}
+	return strings.ToUpper(s)
+}
+
+func strDefault(s, def string) string {
+	if strings.TrimSpace(s) == "" {
+		return def
+	}
+	return s
 }
 
 // parseJSONStringArray extracts the first JSON array of strings from s, tolerating
