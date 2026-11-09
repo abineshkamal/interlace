@@ -6,42 +6,64 @@
 <title>Interlace</title>
 <style>
   :root{
-    --bg:#0f1117; --bg2:#161922; --bg3:#1d2230; --line:#2a3040;
-    --fg:#e6e9f0; --muted:#8b93a7; --accent:#7c5cff; --accent2:#4dd0e1;
-    --green:#4ade80; --amber:#fbbf24; --red:#f87171; --blue:#60a5fa;
+    /* Nebula — dark */
+    --bg:#0a0d14; --bg2:#111621; --bg3:#161c2a; --elev:#161c2a; --line:#232c3f; --line2:#2d3850;
+    --fg:#e7ecf5; --muted:#8893a9; --faint:#5b6479;
+    --accent:#7c6cff; --accent2:#34d8e8; --accent-dim:#241f49;
+    --green:#4cd995; --amber:#f6b24b; --red:#ff6b7a; --blue:#5aa9ff;
+    --rowline:rgba(35,44,63,.55);
+    --shadow:0 1px 2px rgba(0,0,0,.25),0 8px 24px rgba(0,0,0,.28);
     --mono:ui-monospace,"Cascadia Code","Consolas",monospace;
     --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
   }
   :root[data-theme="light"]{
-    --bg:#f6f7f9; --bg2:#ffffff; --bg3:#eceef2; --line:#d9dde6;
-    --fg:#1e2330; --muted:#64748b;
+    /* Nebula — light */
+    --bg:#f5f6fb; --bg2:#ffffff; --bg3:#eef0f7; --elev:#eef0f7; --line:#e4e7f0; --line2:#d6dae8;
+    --fg:#1a2030; --muted:#616b84; --faint:#98a0b5;
+    --accent:#6d5efc; --accent2:#0aa7bd; --accent-dim:#ece9ff;
+    --green:#13a06a; --amber:#c17d00; --red:#e23a4a; --blue:#2563eb;
+    --rowline:#eef1f7;
+    --shadow:0 1px 2px rgba(20,30,60,.04),0 4px 14px rgba(20,30,60,.06);
   }
   *{box-sizing:border-box}
   html,body{margin:0;height:100%}
-  body{background:var(--bg);color:var(--fg);font:13px/1.5 var(--sans);display:flex;flex-direction:column;overflow:hidden}
+  body{background:var(--bg);color:var(--fg);font:13px/1.5 var(--sans);display:flex;flex-direction:row;overflow:hidden}
 
-  header{display:flex;align-items:center;gap:14px;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--line);flex:0 0 auto}
-  .logo{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;letter-spacing:.3px}
-  .logo .mark{width:20px;height:20px}
-  nav{display:flex;gap:4px;margin-left:8px}
-  nav button{background:transparent;border:1px solid transparent;color:var(--muted);padding:5px 14px;border-radius:7px;cursor:pointer;font:13px var(--sans);font-weight:600}
-  nav button:hover{color:var(--fg)}
-  nav button.active{background:var(--bg3);color:#fff;border-color:var(--line)}
+  /* ---- Sidebar ---- */
+  .side{width:228px;flex:0 0 auto;background:var(--bg2);border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:.2px;padding:16px 16px 12px}
+  .logo .mark{width:24px;height:24px}
+  nav{display:flex;flex-direction:column;gap:2px;padding:4px 10px;overflow-y:auto}
+  .navgroup{font-size:10px;text-transform:uppercase;letter-spacing:.9px;color:var(--faint);font-weight:700;padding:12px 8px 5px}
+  nav button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:transparent;border:none;color:var(--muted);padding:8px 11px;border-radius:9px;cursor:pointer;font:13px var(--sans);font-weight:500}
+  nav button:hover{background:var(--elev);color:var(--fg)}
+  nav button.active{background:var(--accent-dim);color:var(--accent)}
+  nav button .ic{width:18px;display:inline-flex;justify-content:center;opacity:.85;font-size:13px}
+  nav button.active .ic{opacity:1}
+  .side .sfoot{margin-top:auto;border-top:1px solid var(--line);padding:11px 14px;display:flex;flex-direction:column;gap:9px}
+  .side .status{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:7px}
+  .side .sfoot-acts{display:flex;flex-wrap:wrap;gap:5px}
   .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
   .dot.live{background:var(--green);animation:pulse 2s infinite}
-  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.5)}70%{box-shadow:0 0 0 6px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
-  header .status{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
-  header .spacer{flex:1}
-  input.filter,input.tin,select.tin{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 10px;font:12px var(--sans)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(76,217,149,.5)}70%{box-shadow:0 0 0 6px rgba(76,217,149,0)}100%{box-shadow:0 0 0 0 rgba(76,217,149,0)}}
+
+  /* ---- Main + topbar ---- */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;flex:0 0 auto;padding:0 20px;background:var(--bg2);border-bottom:1px solid var(--line)}
+  .topbar h1{font-size:16px;font-weight:650;margin:0}
+  .topbar .spacer{flex:1}
+
+  input.filter,input.tin,select.tin{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:7px 11px;font:12px var(--sans)}
   input.filter{width:240px}
   input.filter:focus,input.tin:focus,select.tin:focus{outline:none;border-color:var(--accent)}
-  button.btn{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:6px 11px;cursor:pointer;font:12px var(--sans);transition:.12s}
-  button.btn:hover{border-color:var(--accent);color:#fff}
+  button.btn{background:var(--bg3);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:7px 12px;cursor:pointer;font:12px var(--sans);font-weight:600;transition:.12s}
+  button.btn:hover{border-color:var(--accent);color:var(--accent)}
   button.ghost{background:transparent}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-  button.primary:hover{filter:brightness(1.1)}
+  button.primary:hover{filter:brightness(1.07);color:#fff}
   .count{color:var(--muted);font-size:12px}
   .count b{color:var(--fg)}
+  .navbadge{background:var(--red);color:#fff;border-radius:20px;padding:1px 7px;font:10px var(--sans);font-weight:700;margin-left:auto}
 
   .view{flex:1;min-height:0;display:none;flex-direction:column}
   .view.active{display:flex}
@@ -50,10 +72,10 @@
   .history{flex:1 1 55%;min-height:80px;overflow:auto}
   table{width:100%;border-collapse:collapse;font:12px var(--mono)}
   thead th{position:sticky;top:0;background:var(--bg2);text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);color:var(--muted);font:11px var(--sans);font-weight:600;letter-spacing:.3px;text-transform:uppercase;z-index:1}
-  tbody td{padding:5px 10px;border-bottom:1px solid #1b2030;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  tbody td{padding:5px 10px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   tbody tr{cursor:pointer}
-  tbody tr:hover{background:#1a1f2e}
-  tbody tr.sel{background:#242b3d}
+  tbody tr:hover{background:var(--elev)}
+  tbody tr.sel{background:var(--accent-dim)}
   .col-id{width:52px;color:var(--muted)} .col-time{width:78px;color:var(--muted)}
   .col-method{width:70px;font-weight:700} .col-status{width:60px;text-align:center}
   .col-host{width:200px;color:var(--accent2)} .col-type{width:150px;color:var(--muted)}
@@ -70,8 +92,8 @@
   .pane h3{margin:0;padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
   .pane h3 .badge{font-weight:600;text-transform:none;letter-spacing:0}
   .pane h3 .right{margin-left:auto;display:flex;gap:6px;align-items:center}
-  .pane pre{margin:0;flex:1;overflow:auto;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:#cfd6e4}
-  .hhead{color:var(--accent)} .hname{color:var(--accent2)} .hval{color:#cfd6e4}
+  .pane pre{margin:0;flex:1;overflow:auto;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:var(--fg)}
+  .hhead{color:var(--accent)} .hname{color:var(--accent2)} .hval{color:var(--fg)}
   .empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:20px;font-size:13px}
   .empty .k{color:var(--fg)}
   code.kbd{background:var(--bg3);border:1px solid var(--line);border-radius:4px;padding:1px 6px;font:12px var(--mono);color:var(--accent2)}
@@ -91,8 +113,8 @@
   .rlabel{padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:flex;gap:8px;align-items:center}
   .pl{display:block;font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin:0 0 4px}
   .rlabel .badge{margin-left:auto;font-weight:600;text-transform:none;letter-spacing:0}
-  textarea.req{flex:1;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:12px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto}
-  .rresp{flex:1;overflow:auto;margin:0;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:#cfd6e4}
+  textarea.req{flex:1;resize:none;border:none;background:var(--bg);color:var(--fg);padding:12px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto}
+  .rresp{flex:1;overflow:auto;margin:0;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:var(--fg)}
   .rempty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted)}
 
   .navbadge{background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font:11px var(--sans);font-weight:700;margin-left:2px}
@@ -103,18 +125,18 @@
   #siteTree summary::-webkit-details-marker{display:none}
   #siteTree summary:before{content:"▸ ";color:var(--muted)}
   #siteTree details[open]>summary:before{content:"▾ "}
-  #siteTree summary:hover{background:#1a1f2e}
-  .treepath{padding:4px 8px 4px 26px;cursor:pointer;font:12px var(--mono);color:#cfd6e4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:5px}
-  .treepath:hover{background:#1a1f2e}
-  .treepath.sel{background:#242b3d}
+  #siteTree summary:hover{background:var(--elev)}
+  .treepath{padding:4px 8px 4px 26px;cursor:pointer;font:12px var(--mono);color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:5px}
+  .treepath:hover{background:var(--elev)}
+  .treepath.sel{background:var(--accent-dim)}
   .treepath .cnt{color:var(--muted);margin-left:6px}
 
   /* Issues view */
   .issues{flex:1;display:flex;min-height:0}
   .ilist{width:42%;min-width:300px;overflow:auto;border-right:1px solid var(--line)}
-  .ifind{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-bottom:1px solid #1b2030;cursor:pointer}
-  .ifind:hover{background:#1a1f2e}
-  .ifind.sel{background:#242b3d}
+  .ifind{display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer}
+  .ifind:hover{background:var(--elev)}
+  .ifind.sel{background:var(--accent-dim)}
   .ifind .meta{min-width:0;flex:1}
   .ifind .title{color:var(--fg);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ifind .sub{color:var(--muted);font:11px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -129,7 +151,7 @@
   .idetail .kv{color:var(--muted);font:12px var(--mono);margin:3px 0}
   .idetail .kv b{color:var(--accent2);font-weight:400}
   .idetail .body{padding:16px 18px}
-  .idetail .body p{margin:0 0 14px;color:#cfd6e4}
+  .idetail .body p{margin:0 0 14px;color:var(--fg)}
   .idetail .evid{background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font:12px var(--mono);color:var(--amber);white-space:pre-wrap;word-break:break-word}
   .idetail .vflow{margin-top:14px}
   .ihint{padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;gap:14px}
@@ -147,12 +169,12 @@
   .fz-pl{flex:1;display:flex;flex-direction:column;min-width:0;overflow:auto}
   .fz-sub{padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);display:flex;align-items:center;gap:8px}
   .fz-sub .right{margin-left:auto;display:flex;gap:6px}
-  textarea.tpl,textarea.pl{resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:10px 12px;font:12px/1.55 var(--mono);outline:none;white-space:pre;overflow:auto;width:100%}
+  textarea.tpl,textarea.pl{resize:none;border:none;background:var(--bg);color:var(--fg);padding:10px 12px;font:12px/1.55 var(--mono);outline:none;white-space:pre;overflow:auto;width:100%}
   textarea.tpl{flex:1;min-height:120px}
   .pl-box{display:flex;flex-direction:column;border-bottom:1px solid var(--line)}
-  .pl-box .cap{padding:5px 12px;color:var(--accent2);font:11px var(--mono);background:#141824}
+  .pl-box .cap{padding:5px 12px;color:var(--accent2);font:11px var(--mono);background:var(--bg)}
   textarea.pl{min-height:70px;height:80px}
-  .fz-opts{display:flex;align-items:center;gap:10px;padding:7px 12px;background:#141824;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .fz-opts{display:flex;align-items:center;gap:10px;padding:7px 12px;background:var(--bg);border-bottom:1px solid var(--line);flex-wrap:wrap}
   .fz-opts input.grep{flex:1;min-width:140px}
   .fz-opts input.num{width:66px}
   .fz-results{flex:1;overflow:auto;min-height:60px}
@@ -173,41 +195,52 @@
 </style>
 </head>
 <body>
-<header>
+<aside class="side">
   <div class="logo">
     <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="url(#g)" stroke-width="2.2" stroke-linecap="round">
       <defs><linearGradient id="g" x1="0" y1="0" x2="24" y2="24">
-        <stop offset="0" stop-color="#7c5cff"/><stop offset="1" stop-color="#4dd0e1"/></linearGradient></defs>
+        <stop offset="0" stop-color="#7c6cff"/><stop offset="1" stop-color="#34d8e8"/></linearGradient></defs>
       <path d="M3 7c6 0 6 10 12 10M3 17c6 0 6-10 12-10M15 7h6M15 17h6"/>
     </svg>
     Interlace
   </div>
   <nav>
-    <button id="nav-proxy" class="active" data-view="proxy">Proxy</button>
-    <button id="nav-target" data-view="target">Target</button>
-    <button id="nav-repeater" data-view="repeater">Repeater</button>
-    <button id="nav-fuzzer" data-view="fuzzer">Fuzzer</button>
-    <button id="nav-pentest" data-view="pentest">Pentest</button>
-    <button id="nav-logic" data-view="logic">Logic</button>
-    <button id="nav-issues" data-view="issues">Issues <span class="navbadge" id="issuesBadge" style="display:none">0</span></button>
-    <button id="nav-oob" data-view="oob">OOB <span class="navbadge" id="oobBadge" style="display:none;background:var(--accent2);color:#06202a">0</span></button>
-    <button id="nav-ws" data-view="ws">WS <span class="navbadge" id="wsBadge" style="display:none;background:var(--blue);color:#06202a">0</span></button>
-    <button id="nav-tools" data-view="tools">Tools</button>
+    <div class="navgroup">Capture</div>
+    <button id="nav-proxy" class="active" data-view="proxy"><span class="ic">◧</span>Proxy</button>
+    <button id="nav-target" data-view="target"><span class="ic">◉</span>Target</button>
+    <button id="nav-repeater" data-view="repeater"><span class="ic">⇌</span>Repeater</button>
+    <button id="nav-fuzzer" data-view="fuzzer"><span class="ic">⚡</span>Fuzzer</button>
+    <div class="navgroup">Assess</div>
+    <button id="nav-pentest" data-view="pentest"><span class="ic">▶</span>Pentest</button>
+    <button id="nav-logic" data-view="logic"><span class="ic">✦</span>Logic</button>
+    <button id="nav-issues" data-view="issues"><span class="ic">▲</span>Issues <span class="navbadge" id="issuesBadge" style="display:none">0</span></button>
+    <button id="nav-oob" data-view="oob"><span class="ic">◇</span>OOB <span class="navbadge" id="oobBadge" style="display:none;background:var(--accent2);color:#06202a">0</span></button>
+    <div class="navgroup">Utilities</div>
+    <button id="nav-ws" data-view="ws"><span class="ic">≈</span>WebSocket <span class="navbadge" id="wsBadge" style="display:none;background:var(--blue);color:#06202a">0</span></button>
+    <button id="nav-tools" data-view="tools"><span class="ic">⚙</span>Tools</button>
   </nav>
-  <div class="status"><span class="dot" id="dot"></span><span id="connLbl">connecting…</span></div>
-  <div class="spacer"></div>
-  <button class="btn" id="interceptBtn" title="Pause requests to edit or drop them">Intercept: off</button>
-  <button class="btn" id="interceptRespBtn" title="Pause responses to edit or drop them">Resp: off</button>
-  <span class="count" id="proxyCtl">Flows: <b id="count">0</b></span>
-  <input class="filter" id="filter" placeholder="Search host, path, body…">
-  <button class="btn ghost" id="scopeBtn">Scope</button>
-  <button class="btn ghost" id="sessionBtn">Session</button>
-  <button class="btn ghost" id="aiBtn">AI</button>
-  <button class="btn ghost" id="themeBtn" title="Toggle light/dark">◐</button>
-  <button class="btn ghost" id="setupBtn">Setup</button>
-  <button class="btn ghost" id="certBtn">Download CA</button>
-  <button class="btn ghost" id="clearBtn">Clear</button>
-</header>
+  <div class="sfoot">
+    <div class="status"><span class="dot" id="dot"></span><span id="connLbl">connecting…</span></div>
+    <div class="sfoot-acts">
+      <button class="btn ghost" id="themeBtn" title="Toggle light/dark">◐ Theme</button>
+      <button class="btn ghost" id="setupBtn">Setup</button>
+      <button class="btn ghost" id="certBtn">Download CA</button>
+      <button class="btn ghost" id="clearBtn">Clear</button>
+    </div>
+  </div>
+</aside>
+<main class="main">
+  <div class="topbar">
+    <h1 id="viewTitle">Proxy</h1>
+    <div class="spacer"></div>
+    <span class="count" id="proxyCtl">Flows: <b id="count">0</b></span>
+    <input class="filter" id="filter" placeholder="Search host, path, body…">
+    <button class="btn" id="interceptBtn" title="Pause requests to edit or drop them">Intercept: off</button>
+    <button class="btn" id="interceptRespBtn" title="Pause responses to edit or drop them">Resp: off</button>
+    <button class="btn ghost" id="sessionBtn">Session</button>
+    <button class="btn ghost" id="aiBtn">AI</button>
+    <button class="btn primary" id="scopeBtn">Scope</button>
+  </div>
 
 <!-- PROXY VIEW -->
 <section class="view active" id="view-proxy">
@@ -518,6 +551,7 @@ Host: httpbin.org
     </div>
   </div>
 </section>
+</main>
 
 <div class="setup" id="aiModal">
   <div class="card" style="max-width:520px">
@@ -671,7 +705,7 @@ Host: httpbin.org
       <span id="wsInterceptMeta" style="color:var(--muted);font:12px var(--mono)"></span>
       <span id="wsInterceptQueue" style="margin-left:auto;color:var(--muted);font-size:12px"></span>
     </div>
-    <textarea id="wsInterceptPayload" spellcheck="false" style="min-height:180px;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:14px;font:12px/1.6 var(--mono);outline:none;white-space:pre-wrap;overflow:auto"></textarea>
+    <textarea id="wsInterceptPayload" spellcheck="false" style="min-height:180px;resize:none;border:none;background:var(--bg);color:var(--fg);padding:14px;font:12px/1.6 var(--mono);outline:none;white-space:pre-wrap;overflow:auto"></textarea>
     <div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end">
       <button class="btn" id="wsInterceptDrop">Drop</button>
       <button class="btn primary" id="wsInterceptForward">Forward ▶</button>
@@ -687,7 +721,7 @@ Host: httpbin.org
       <span id="interceptMeta" style="color:var(--muted);font:12px var(--mono)"></span>
       <span id="interceptQueue" style="margin-left:auto;color:var(--muted);font-size:12px"></span>
     </div>
-    <textarea id="interceptRaw" spellcheck="false" style="flex:1;min-height:300px;resize:none;border:none;background:var(--bg);color:#cfd6e4;padding:14px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto"></textarea>
+    <textarea id="interceptRaw" spellcheck="false" style="flex:1;min-height:300px;resize:none;border:none;background:var(--bg);color:var(--fg);padding:14px;font:12px/1.6 var(--mono);outline:none;white-space:pre;overflow:auto"></textarea>
     <div style="padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end">
       <button class="btn" id="interceptDrop">Drop</button>
       <button class="btn primary" id="interceptForward">Forward ▶</button>
@@ -711,10 +745,12 @@ function statusClass(s){ if(!s) return 's0'; return 's' + String(s)[0]; }
 function esc(x){ return (x==null?'':String(x)).replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
 /* ---------- view switching ---------- */
+const viewTitles={proxy:'Proxy',target:'Target',repeater:'Repeater',fuzzer:'Fuzzer',pentest:'Pentest',logic:'Business Logic',issues:'Issues',oob:'Out-of-Band',ws:'WebSocket',tools:'Tools'};
 document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{
   const v=b.dataset.view;
   document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('active',x===b));
   document.querySelectorAll('.view').forEach(sec=>sec.classList.toggle('active', sec.id==='view-'+v));
+  const vt=$('#viewTitle'); if(vt) vt.textContent=viewTitles[v]||v;
   $('#proxyCtl').style.display = v==='proxy'?'':'none';
   $('#filter').style.display = v==='proxy'?'':'none';
 }));
@@ -1966,7 +2002,7 @@ $('#projFile').addEventListener('change', async e=>{
   e.target.value='';
 });
 // Theme toggle (persisted).
-(function(){ try{ const t=localStorage.getItem('interlace-theme'); if(t) document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
+(function(){ try{ const t=localStorage.getItem('interlace-theme')||'light'; document.documentElement.setAttribute('data-theme',t); }catch(e){ document.documentElement.setAttribute('data-theme','light'); } })();
 $('#themeBtn').addEventListener('click', ()=>{
   const cur=document.documentElement.getAttribute('data-theme')==='light'?'dark':'light';
   document.documentElement.setAttribute('data-theme',cur);
