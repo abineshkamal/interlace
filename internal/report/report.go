@@ -39,6 +39,7 @@ type Report struct {
 	Target    string
 	Generated time.Time
 	Findings  []Finding
+	Company   string // optional: organisation the report is prepared for
 }
 
 var sevOrder = map[string]int{"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -68,9 +69,13 @@ func (r Report) PDF() ([]byte, error) {
 	// Title page header.
 	pdf.AddPage()
 	pdf.SetFont("Helvetica", "B", 22)
-	pdf.Cell(0, 12, "Interlace Security Assessment")
+	pdf.Cell(0, 12, "Security Assessment")
 	pdf.Ln(14)
 	pdf.SetFont("Helvetica", "", 11)
+	if r.Company != "" {
+		pdf.Cell(0, 7, "Prepared for: "+r.Company)
+		pdf.Ln(7)
+	}
 	pdf.Cell(0, 7, "Target: "+r.Target)
 	pdf.Ln(7)
 	pdf.Cell(0, 7, "Generated: "+r.Generated.Format("2006-01-02 15:04 MST"))
@@ -236,7 +241,10 @@ func (r Report) XLSX() ([]byte, error) {
 
 	// Summary sheet.
 	f.SetSheetName("Sheet1", "Summary")
-	f.SetCellValue("Summary", "A1", "Interlace Security Assessment")
+	f.SetCellValue("Summary", "A1", "Security Assessment")
+	if r.Company != "" {
+		f.SetCellValue("Summary", "A1", "Security Assessment — "+r.Company)
+	}
 	f.SetCellValue("Summary", "A2", "Target")
 	f.SetCellValue("Summary", "B2", r.Target)
 	f.SetCellValue("Summary", "A3", "Generated")
@@ -322,7 +330,10 @@ func (r Report) DOCX() ([]byte, error) {
 		body.WriteString(`<w:r><w:t xml:space="preserve">` + xmlEsc(value) + `</w:t></w:r></w:p>`)
 	}
 
-	para("Interlace Security Assessment", "", true, 20)
+	para("Security Assessment", "", true, 20)
+	if r.Company != "" {
+		para("Prepared for: "+r.Company, "", false, 11)
+	}
 	para("Target: "+r.Target, "", false, 11)
 	para("Generated: "+r.Generated.Format("2006-01-02 15:04 MST"), "", false, 11)
 	para("", "", false, 0)

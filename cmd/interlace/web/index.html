@@ -738,6 +738,17 @@ Host: httpbin.org
       <button class="btn" id="projImport">Import project</button>
       <input type="file" id="projFile" accept=".json" style="display:none">
     </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Report branding</h2>
+    <p style="color:var(--muted);margin:2px 0 8px;font-size:12px">Appears on generated reports (HTML/PDF/Word/Excel).</p>
+    <input class="tin" id="brandCompany" placeholder="Company / client name" style="width:100%;margin-bottom:6px">
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" id="brandLogoBtn">Upload logo</button>
+      <input type="file" id="brandLogoFile" accept="image/*" style="display:none">
+      <img id="brandLogoPrev" style="max-height:28px;max-width:120px;display:none">
+      <button class="btn primary" id="brandSave" style="margin-left:auto">Save branding</button>
+      <span id="brandMsg" style="color:var(--muted);font-size:12px"></span>
+    </div>
   </div>
 </div>
 
@@ -1885,7 +1896,8 @@ $('#jwtResign').addEventListener('click', async ()=>{
     $('#jwtOut').value=signing+'.'+b64urlEncodeBytes(sig); $('#jwtMsg').textContent='Re-signed with HS256.'; $('#jwtMsg').style.color='var(--green)';
   }catch(e){ $('#jwtMsg').textContent='error: '+e.message; $('#jwtMsg').style.color='var(--red)'; }
 });
-const JWT_SECRETS=['secret','password','123456','changeme','admin','jwt','key','token','test','secretkey','your-256-bit-secret','supersecret','private','s3cr3t','qwerty','letmein','default','iloveyou','root','pass'];
+const JWT_SECRETS=['secret','password','123456','changeme','admin','jwt','key','token','test','secretkey','your-256-bit-secret','supersecret','private','s3cr3t','qwerty','letmein','default','iloveyou','root','pass',
+'keyboard cat','jwtsecret','jwt-secret','jwt_secret','mysecret','mysecretkey','secret123','secret_key','secretOrPrivateKey','your_jwt_secret','app-secret','super-secret','topsecret','HS256','ThisIsMySecret','my-secret','shh','password123','admin123','Password1','passw0rd','P@ssw0rd','abc123','welcome','welcome1','master','shadow','node','nodejs','express','0','1234567890','changeit','secret!','Secret123!','qwertyuiop','123456789','12345678','hmac','signingkey','accesstoken'];
 $('#jwtCrack').addEventListener('click', async ()=>{
   try{ const j=jwtParse($('#jwtIn').value); if((j.header.alg||'').toUpperCase()!=='HS256'){ $('#jwtMsg').textContent='Secret cracking only applies to HS256 tokens.'; $('#jwtMsg').style.color='var(--amber)'; return; }
     const p=$('#jwtIn').value.trim().split('.'); const signing=p[0]+'.'+p[1];
@@ -2129,6 +2141,20 @@ $('#themeBtn').addEventListener('click', ()=>{
 });
 $('#setupBtn').addEventListener('click', ()=>$('#setup').classList.add('show'));
 $('#setupClose').addEventListener('click', ()=>$('#setup').classList.remove('show'));
+// Report branding.
+let brandLogo='';
+async function loadBranding(){ try{ const b=await (await fetch('/branding')).json();
+  $('#brandCompany').value=b.company||''; brandLogo=b.logo||'';
+  if(brandLogo){ const p=$('#brandLogoPrev'); p.src=brandLogo; p.style.display=''; } }catch(e){} }
+$('#brandLogoBtn').addEventListener('click', ()=>$('#brandLogoFile').click());
+$('#brandLogoFile').addEventListener('change', e=>{ const f=e.target.files[0]; if(!f) return;
+  if(f.size>400000){ $('#brandMsg').textContent='logo too large (max ~400KB)'; return; }
+  const rd=new FileReader(); rd.onload=()=>{ brandLogo=rd.result; const p=$('#brandLogoPrev'); p.src=brandLogo; p.style.display=''; }; rd.readAsDataURL(f); });
+$('#brandSave').addEventListener('click', async ()=>{
+  await fetch('/branding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({company:$('#brandCompany').value.trim(),logo:brandLogo})});
+  $('#brandMsg').textContent='saved ✓'; setTimeout(()=>{ const m=$('#brandMsg'); if(m) m.textContent=''; },1500);
+});
+$('#setupBtn').addEventListener('click', loadBranding);
 $('#setup').addEventListener('click', e=>{ if(e.target.id==='setup') $('#setup').classList.remove('show'); });
 
 /* resizable split (proxy view) */

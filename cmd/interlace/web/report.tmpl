@@ -45,9 +45,9 @@
 <body>
 <div class="wrap">
   <header>
-    <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#6d28d9" stroke-width="2.2" stroke-linecap="round">
-      <path d="M3 7c6 0 6 10 12 10M3 17c6 0 6-10 12-10M15 7h6M15 17h6"/></svg>
-    <h1>Interlace Security Report</h1>
+    {{if .Logo}}<img src="{{.Logo}}" alt="" style="max-height:40px;max-width:180px">{{else}}<svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#6d28d9" stroke-width="2.2" stroke-linecap="round">
+      <path d="M3 7c6 0 6 10 12 10M3 17c6 0 6-10 12-10M15 7h6M15 17h6"/></svg>{{end}}
+    <h1>{{if .Company}}{{.Company}} — Security Report{{else}}Interlace Security Report{{end}}</h1>
     <div class="sub">Generated {{.Generated}}<br>{{.Flows}} requests observed</div>
   </header>
 

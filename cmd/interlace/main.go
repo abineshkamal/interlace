@@ -72,6 +72,32 @@ var reportTmpl = template.Must(template.New("report").Parse(reportTmplSrc))
 // screenshot files; set from the data dir in main() to keep off a full C: drive.
 var shotWorkDir string
 
+// brandingFile holds the path to the optional report-branding config.
+var brandingFile string
+
+type brandingCfg struct {
+	Company string `json:"company"`
+	Logo    string `json:"logo"` // optional data: URL (shown in the HTML report)
+}
+
+func loadBranding() brandingCfg {
+	var b brandingCfg
+	if brandingFile != "" {
+		if data, err := os.ReadFile(brandingFile); err == nil {
+			_ = json.Unmarshal(data, &b)
+		}
+	}
+	return b
+}
+
+func saveBranding(b brandingCfg) error {
+	if brandingFile == "" {
+		return nil
+	}
+	data, _ := json.Marshal(b)
+	return os.WriteFile(brandingFile, data, 0o600)
+}
+
 func main() {
 	// Headless CLI scan mode for CI pipelines: `interlace scan <url> [flags]`.
 	if len(os.Args) > 1 && os.Args[1] == "scan" {
@@ -107,6 +133,7 @@ func main() {
 	defer st.Close()
 
 	shotWorkDir = filepath.Join(*dataDir, "shots-tmp")
+	brandingFile = filepath.Join(*dataDir, "branding.json")
 
 	h := hub.New()          // live flows
 	findHub := hub.New()    // live findings
@@ -1570,6 +1597,24 @@ REASON: <one sentence>`,
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
+	// Report branding (company name + optional logo) for generated reports.
+	mux.HandleFunc("/branding", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var b brandingCfg
+			if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if err := saveBranding(b); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+			return
+		}
+		writeJSON(w, loadBranding())
+	})
+
 	// Set a finding's triage status (open | confirmed | false-positive | fixed).
 	mux.HandleFunc("/finding/triage", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -1842,7 +1887,7 @@ REASON: <one sentence>`,
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			rep := report.Report{Target: reportTarget(ev), Generated: time.Now()}
+			rep := report.Report{Target: reportTarget(ev), Generated: time.Now(), Company: loadBranding().Company}
 			for _, f := range ev {
 				rep.Findings = append(rep.Findings, report.Finding{
 					Severity: f.Severity, Title: f.Title, Host: f.Host, URL: f.URL, Check: f.Check,
@@ -1901,15 +1946,18 @@ REASON: <one sentence>`,
 			groups = append(groups, hostGroup{Host: h, Findings: byHost[h]})
 		}
 
+		brand := loadBranding()
 		data := struct {
 			Generated string
 			Flows     int64
 			Counts    map[string]int
 			Summary   string
+			Company   string
+			Logo      string
 			Findings  []scanner.Finding
 			Groups    []hostGroup
 		}{time.Now().Format("2006-01-02 15:04 MST"), flows, counts,
-			report.SummaryText("", counts, len(findings)), findings, groups}
+			report.SummaryText(brand.Company, counts, len(findings)), brand.Company, brand.Logo, findings, groups}
 
 		if r.URL.Query().Get("dl") != "" {
 			w.Header().Set("Content-Disposition", `attachment; filename="interlace-report.html"`)
