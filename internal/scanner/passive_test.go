@@ -75,3 +75,40 @@ func TestPassiveNoFalsePositiveOnCleanResponse(t *testing.T) {
 		t.Error("HTML-only checks should not fire on a JSON response")
 	}
 }
+
+func TestPassiveDisclosureChecks(t *testing.T) {
+	cases := []struct {
+		name, scheme, ctype string
+		body                string
+		want                string
+	}{
+		{"php-error", "https", "text/html", `<b>Fatal error</b>: Uncaught Error in /var/www/app.php`, "error-disclosure"},
+		{"python-trace", "https", "text/html", "Traceback (most recent call last):\n  File \"/app/x.py\", line 10", "error-disclosure"},
+		{"oracle-error", "https", "application/json", `{"err":"ORA-01756: quoted string not properly terminated"}`, "error-disclosure"},
+		{"dir-listing", "https", "text/html", `<html><head><title>Index of /uploads</title></head><body><h1>Index of /uploads</h1>`, "directory-listing"},
+		{"pw-over-http", "http", "text/html", `<form><input type="password" name="p"></form>`, "password-over-http"},
+		{"private-ip", "https", "text/html", `<p>backend host 10.4.12.9 responded</p>`, "private-ip-disclosure"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := &model.Flow{
+				Scheme: c.scheme, StatusCode: 200, ContentType: c.ctype,
+				RespHeaders: http.Header{"Content-Type": {c.ctype}},
+				RespBody:    []byte(c.body),
+			}
+			if !findingChecks(Scan(f))[c.want] {
+				t.Errorf("expected %s for %s", c.want, c.name)
+			}
+		})
+	}
+	// Negative: a clean HTML page must not trigger the new checks.
+	clean := &model.Flow{Scheme: "https", StatusCode: 200, ContentType: "text/html",
+		RespHeaders: http.Header{"Content-Type": {"text/html"}},
+		RespBody:    []byte(`<html><body><h1>Welcome</h1><p>All good here.</p></body></html>`)}
+	got := findingChecks(Scan(clean))
+	for _, c := range []string{"error-disclosure", "directory-listing", "password-over-http", "private-ip-disclosure"} {
+		if got[c] {
+			t.Errorf("false positive: %s on a clean page", c)
+		}
+	}
+}

@@ -85,6 +85,117 @@ var checks = []check{
 	checkCORSReflection,
 	checkCacheable,
 	checkTechFingerprint,
+	checkErrorDisclosure,
+	checkDirectoryListing,
+	checkPasswordOverHTTP,
+	checkPrivateIP,
+}
+
+// ---- Additional disclosure / misconfiguration checks ----
+
+// errorSigs are tight signatures for framework stack traces, debug pages and
+// database errors. They are specific enough to keep false positives low.
+var errorSigs = []*regexp.Regexp{
+	regexp.MustCompile(`Traceback \(most recent call last\):`),           // Python
+	regexp.MustCompile(`\bat [\w$.]+\([\w$]+\.java:\d+\)`),                // Java stack frame
+	regexp.MustCompile(`\bjava\.(lang|util|io|net)\.[A-Za-z.]*Exception`), // Java exception
+	regexp.MustCompile(`(?i)<b>(Fatal error|Warning|Parse error|Notice)</b>:`), // PHP
+	regexp.MustCompile(`(?i)Stack trace:\s*#0`),                           // PHP stack trace
+	regexp.MustCompile(`System\.[A-Za-z.]+Exception:`),                    // .NET
+	regexp.MustCompile(`(?i)Server Error in '.*' Application`),            // ASP.NET YSOD
+	regexp.MustCompile(`(?i)Microsoft OLE DB Provider`),                   // classic ASP / SQL
+	regexp.MustCompile(`\bORA-\d{4,5}\b`),                                 // Oracle
+	regexp.MustCompile(`(?i)You have an error in your SQL syntax`),        // MySQL
+	regexp.MustCompile(`(?i)PostgreSQL.{0,40}(ERROR|query failed)`),       // Postgres
+	regexp.MustCompile(`(?i)Werkzeug Debugger`),                           // Flask debug
+	regexp.MustCompile(`(?i)Whoops, looks like something went wrong`),     // Laravel
+	regexp.MustCompile(`(?i)(ActionController|ActiveRecord)::[A-Za-z]+`),  // Rails
+	regexp.MustCompile(`\bat [\w$./-]+:\d+:\d+\)[\s\S]{0,80}?\bat `),      // Node/JS (two frames)
+}
+
+func checkErrorDisclosure(f *model.Flow) []Finding {
+	body := decodeResponseBody(f)
+	if len(body) == 0 {
+		return nil
+	}
+	for _, re := range errorSigs {
+		if loc := re.FindIndex(body); loc != nil {
+			return one(Low, "error-disclosure", "Verbose error / stack trace disclosure",
+				"The response contains a stack trace, debug page or database error that leaks internal paths, versions and logic.",
+				snippet(body, loc), "error-disclosure|"+f.Host+"|"+pathOnly(f))
+		}
+	}
+	return nil
+}
+
+var dirListSig = regexp.MustCompile(`(?i)<title>Index of /|<h1>Index of /|Directory listing for /`)
+
+func checkDirectoryListing(f *model.Flow) []Finding {
+	if !isHTML(f) {
+		return nil
+	}
+	body := decodeResponseBody(f)
+	if loc := dirListSig.FindIndex(body); loc != nil {
+		return one(Medium, "directory-listing", "Directory listing enabled",
+			"The server returns an automatic directory listing, exposing file and folder names (backups, source, configs) that should not be enumerable.",
+			snippet(body, loc), "directory-listing|"+f.Host+"|"+pathOnly(f))
+	}
+	return nil
+}
+
+var passwordInputPassiveRe = regexp.MustCompile(`(?i)<input[^>]+type=["']?password`)
+
+func checkPasswordOverHTTP(f *model.Flow) []Finding {
+	if f.Scheme != "http" || !isHTML(f) {
+		return nil
+	}
+	body := decodeResponseBody(f)
+	if passwordInputPassiveRe.Match(body) {
+		return one(Medium, "password-over-http", "Password field served over cleartext HTTP",
+			"A password input is delivered over unencrypted HTTP, so credentials can be captured or the form tampered with by a network attacker.",
+			"", "password-over-http|"+f.Host+"|"+pathOnly(f))
+	}
+	return nil
+}
+
+var privIPRe = regexp.MustCompile(`\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b`)
+
+func checkPrivateIP(f *model.Flow) []Finding {
+	body := decodeResponseBody(f)
+	if m := privIPRe.Find(body); m != nil {
+		ip := string(m)
+		if ip == "192.168.0.0" || ip == "10.0.0.0" {
+			return nil
+		}
+		return one(Low, "private-ip-disclosure", "Internal IP address disclosure",
+			"The response discloses a private/internal IP address, revealing internal network topology useful for lateral movement.",
+			ip, "private-ip-disclosure|"+f.Host)
+	}
+	return nil
+}
+
+// snippet returns a short, whitespace-collapsed excerpt around a regex match.
+func snippet(b []byte, loc []int) string {
+	start := loc[0] - 24
+	if start < 0 {
+		start = 0
+	}
+	end := loc[1] + 80
+	if end > len(b) {
+		end = len(b)
+	}
+	s := strings.Join(strings.Fields(string(b[start:end])), " ")
+	if len(s) > 180 {
+		s = s[:180] + "…"
+	}
+	return s
+}
+
+func pathOnly(f *model.Flow) string {
+	if i := strings.IndexByte(f.Path, '?'); i >= 0 {
+		return f.Path[:i]
+	}
+	return f.Path
 }
 
 // checkTechFingerprint reports detected technologies (info) from headers and cookies.

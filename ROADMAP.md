@@ -37,6 +37,8 @@ Status of features and what's planned. ✅ done · 🟡 planned · 🔴 heavy / 
 - ✅ **AI-assisted triage** + **executive summary**, **provider-agnostic** (Anthropic or any OpenAI-compatible / local model), **AI-generated fuzzing payloads**
 - ✅ **Business Logic Advisor** — give the app's context + roles and the AI crafts concrete, app-specific business-logic test cases (IDOR, price tampering, workflow bypass, privilege escalation, …) from the captured endpoints, each openable in Repeater
 - ✅ **Authenticated pentest** — scripted form login with optional **TOTP/2FA** (RFC 6238), seeds the crawl from the post-login landing page plus user-supplied extra entry points, and live progress with clickable crawled requests for manual testing
+- ✅ **Client-ready reports** (HTML/PDF/Word/Excel) — executive summary + severity breakdown, and per-finding affected URL, description, impact, recommendation, **CVSS v3.1 score/vector** and **CWE + OWASP Top 10** references
+- ✅ **Expanded detection** — verbose-error/stack-trace disclosure, directory listing, cleartext password forms, internal-IP disclosure, and Cross-Site Tracing (TRACE) / risky HTTP methods, on top of the injection + misconfiguration checks
 - ✅ **OpenAPI / Swagger / Postman import** to seed scan targets
 - ✅ **Project export/import** (single portable JSON file)
 - ✅ **Save/load Repeater requests**, **UI access token**, **save/load Fuzzer presets**, **light/dark theme toggle**

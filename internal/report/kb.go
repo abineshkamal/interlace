@@ -61,13 +61,13 @@ func cvssFor(check string) (float64, string) {
 		return 6.5, "AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N"
 	case "reflected-xss", "open-redirect", "crlf", "host-header-injection", "cookie-no-samesite":
 		return 6.1, "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
-	case "missing-hsts", "cookie-no-secure":
+	case "missing-hsts", "cookie-no-secure", "password-over-http":
 		return 5.9, "AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
-	case "graphql-introspection", "cookie-no-httponly":
+	case "graphql-introspection", "cookie-no-httponly", "error-disclosure", "directory-listing", "http-trace", "http-methods":
 		return 5.3, "AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
 	case "missing-csp", "missing-xfo":
 		return 4.3, "AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N"
-	case "missing-nosniff", "missing-referrer-policy":
+	case "missing-nosniff", "missing-referrer-policy", "private-ip-disclosure":
 		return 3.7, "AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N"
 	default: // server-version, x-powered-by, jwt-observed, graphql-endpoint, unknown → informational
 		return 0, ""
@@ -266,6 +266,36 @@ var kb = map[string]Meta{
 		Impact:      "A cookie without SameSite is sent on cross-site requests, enabling cross-site request forgery.",
 		Remediation: "Set SameSite=Lax or Strict on session/auth cookies.",
 		CWE:         "CWE-1275", CWEName: "Sensitive Cookie with Improper SameSite Attribute", OWASP: "A05:2021 – Security Misconfiguration",
+	},
+	"error-disclosure": {
+		Impact:      "Verbose errors and stack traces reveal internal file paths, library versions, SQL and application logic that help an attacker craft targeted attacks.",
+		Remediation: "Return generic error pages to users; log full details server-side only; disable debug mode in production.",
+		CWE:         "CWE-209", CWEName: "Generation of Error Message Containing Sensitive Information", OWASP: "A05:2021 – Security Misconfiguration",
+	},
+	"directory-listing": {
+		Impact:      "An automatic directory listing exposes file and folder names — backups, source and configuration files — that should not be enumerable.",
+		Remediation: "Disable directory listing / autoindex on the web server and remove sensitive files from web roots.",
+		CWE:         "CWE-548", CWEName: "Exposure of Information Through Directory Listing", OWASP: "A05:2021 – Security Misconfiguration",
+	},
+	"password-over-http": {
+		Impact:      "A password field delivered over cleartext HTTP lets a network attacker capture credentials in transit or tamper with the login form.",
+		Remediation: "Serve all authentication pages and form submissions exclusively over HTTPS and enable HSTS.",
+		CWE:         "CWE-319", CWEName: "Cleartext Transmission of Sensitive Information", OWASP: "A02:2021 – Cryptographic Failures",
+	},
+	"http-trace": {
+		Impact:      "With TRACE enabled, Cross-Site Tracing can read headers (including auth cookies) that HttpOnly and other protections would normally hide.",
+		Remediation: "Disable the TRACE (and TRACK) method at the web server/application tier.",
+		CWE:         "CWE-693", CWEName: "Protection Mechanism Failure", OWASP: "A05:2021 – Security Misconfiguration",
+	},
+	"http-methods": {
+		Impact:      "Dangerous HTTP methods (PUT/DELETE/CONNECT/…) may allow uploading, modifying or deleting content or proxying requests if not strictly controlled.",
+		Remediation: "Disable unused HTTP methods and enforce method-level authorization on every endpoint.",
+		CWE:         "CWE-650", CWEName: "Trusting HTTP Permission Methods on the Server Side", OWASP: "A05:2021 – Security Misconfiguration",
+	},
+	"private-ip-disclosure": {
+		Impact:      "Internal IP addresses or hostnames in responses reveal network topology that aids lateral movement and internal targeting.",
+		Remediation: "Remove internal addresses and hostnames from responses, error messages and headers.",
+		CWE:         "CWE-200", CWEName: "Exposure of Sensitive Information", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"cors-wildcard": cors, "cors-origin-reflection": cors, "cors-null-origin": cors,
 	"cors-wildcard-credentials": {

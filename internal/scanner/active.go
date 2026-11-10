@@ -231,6 +231,7 @@ func RunActive(ctx context.Context, t Target, sender *repeater.Sender, oob OOBCl
 		checkDeser(ctx, t, req, sender, report, &probes, &mu)
 		checkMassAssignment(ctx, t, req, sender, report, &probes, &mu)
 		checkSmuggle(ctx, t, req, sender, report, &probes, &mu)
+		checkHTTPMethods(ctx, t, req, sender, report, &probes, &mu)
 	}
 
 	// Resolve out-of-band checks: give callbacks a moment to arrive.
@@ -263,6 +264,61 @@ var deserRe = regexp.MustCompile(`(?i)(java\.io\.(Invalid(Class|Object)|StreamCo
 
 // checkDeser tests body-accepting endpoints for insecure deserialization by
 // replacing the body with known serialized-object payloads.
+// checkHTTPMethods tests for Cross-Site Tracing (TRACE enabled and reflecting)
+// and risky HTTP verbs advertised via OPTIONS. Findings dedup per host.
+func checkHTTPMethods(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
+	path := req.path
+	if path == "" {
+		path = "/"
+	}
+	bump := func() { mu.Lock(); *probes++; mu.Unlock() }
+
+	// TRACE → Cross-Site Tracing: the server echoes the request back.
+	marker := "Interlace-XST-" + randToken()
+	rawT := "TRACE " + path + " HTTP/1.1\r\nHost: " + t.Host + "\r\nX-Interlace-XST: " + marker + "\r\nConnection: close\r\n\r\n"
+	if resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: rawT}); resp.Error == "" {
+		bump()
+		if resp.Status == 200 && strings.Contains(resp.Body, marker) {
+			report(Finding{
+				Severity: Medium, Check: "http-trace", Title: "HTTP TRACE enabled (Cross-Site Tracing)",
+				Detail:   "The server responds to TRACE and echoes the request, enabling Cross-Site Tracing (XST) to read headers a browser would otherwise protect.",
+				Evidence: "TRACE " + path + " reflected the probe header", Source: "active",
+				Key: "http-trace|" + t.Host,
+			})
+		}
+	}
+
+	// OPTIONS → flag risky methods advertised in the Allow header.
+	if ctx.Err() != nil {
+		return
+	}
+	rawO := "OPTIONS " + path + " HTTP/1.1\r\nHost: " + t.Host + "\r\nConnection: close\r\n\r\n"
+	if resp := sender.Send(ctx, repeater.Request{Scheme: t.Scheme, Host: t.Host, Raw: rawO}); resp.Error == "" {
+		bump()
+		allow := ""
+		for _, line := range strings.Split(resp.Headers, "\n") {
+			if i := strings.IndexByte(line, ':'); i > 0 && strings.EqualFold(strings.TrimSpace(line[:i]), "Allow") {
+				allow = strings.TrimSpace(line[i+1:])
+			}
+		}
+		up := strings.ToUpper(allow)
+		var risky []string
+		for _, m := range []string{"PUT", "DELETE", "TRACE", "CONNECT", "PATCH"} {
+			if strings.Contains(up, m) {
+				risky = append(risky, m)
+			}
+		}
+		if len(risky) > 0 {
+			report(Finding{
+				Severity: Low, Check: "http-methods", Title: "Risky HTTP methods enabled",
+				Detail:   "The server advertises potentially dangerous HTTP methods (" + strings.Join(risky, ", ") + "). Verify they are intended and properly access-controlled.",
+				Evidence: "Allow: " + allow, Source: "active",
+				Key: "http-methods|" + t.Host,
+			})
+		}
+	}
+}
+
 func checkDeser(ctx context.Context, t Target, req *request, sender *repeater.Sender, report func(Finding), probes *int, mu *sync.Mutex) {
 	switch req.method {
 	case "POST", "PUT", "PATCH":

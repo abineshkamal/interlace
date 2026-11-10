@@ -37,7 +37,36 @@ func main() {
 <li><a href="/file?file=a.txt">file</a></li>
 <li><a href="/ping?host=localhost">ping</a></li>
 <li><a href="/safe?x=1">safe</a></li>
+<li><a href="/errorpage">errorpage</a></li>
+<li><a href="/listing">listing</a></li>
+<li><a href="/methods">methods</a></li>
 </ul></body></html>`)
+	})
+	// Verbose error page (triggers passive error-disclosure).
+	mux.HandleFunc("/errorpage", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><b>Fatal error</b>: Uncaught Exception in /var/www/html/app.php:42
+Stack trace: #0 /var/www/html/index.php(10): handler()</body></html>`)
+	})
+	// Directory listing page (triggers passive directory-listing).
+	mux.HandleFunc("/listing", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><head><title>Index of /backup</title></head><body><h1>Index of /backup</h1>
+<pre><a href="db.sql">db.sql</a>  <a href="app.zip">app.zip</a></pre></body></html>`)
+	})
+	// Endpoint that permits TRACE (XST) and advertises risky methods via OPTIONS.
+	mux.HandleFunc("/methods", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodOptions:
+			w.Header().Set("Allow", "GET, POST, PUT, DELETE, TRACE")
+			w.WriteHeader(http.StatusOK)
+		case "TRACE":
+			w.Header().Set("Content-Type", "message/http")
+			fmt.Fprintf(w, "TRACE /methods HTTP/1.1\r\nHost: %s\r\nX-Interlace-XST: %s\r\n", r.Host, r.Header.Get("X-Interlace-XST"))
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, "<html>methods demo</html>")
+		}
 	})
 
 	// Reflected XSS: reflects q into HTML without encoding.
