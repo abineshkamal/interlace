@@ -4,6 +4,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"compress/flate"
 	"compress/gzip"
@@ -75,6 +76,9 @@ var shotWorkDir string
 // brandingFile holds the path to the optional report-branding config.
 var brandingFile string
 
+// templateFile holds the path to the optional uploaded Word (.docx) report template.
+var templateFile string
+
 type brandingCfg struct {
 	Company string `json:"company"`
 	Logo    string `json:"logo"` // optional data: URL (shown in the HTML report)
@@ -134,6 +138,7 @@ func main() {
 
 	shotWorkDir = filepath.Join(*dataDir, "shots-tmp")
 	brandingFile = filepath.Join(*dataDir, "branding.json")
+	templateFile = filepath.Join(*dataDir, "report-template.docx")
 
 	h := hub.New()          // live flows
 	findHub := hub.New()    // live findings
@@ -1615,6 +1620,46 @@ REASON: <one sentence>`,
 		writeJSON(w, loadBranding())
 	})
 
+	// Report template: upload / check / remove a .docx template to populate.
+	mux.HandleFunc("/report/template", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			data, err := io.ReadAll(io.LimitReader(r.Body, 25<<20))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			// Validate it is a .docx (zip with word/document.xml).
+			if zr, zerr := zip.NewReader(bytes.NewReader(data), int64(len(data))); zerr != nil {
+				writeJSON(w, map[string]any{"error": "not a valid .docx file"})
+				return
+			} else {
+				ok := false
+				for _, f := range zr.File {
+					if f.Name == "word/document.xml" {
+						ok = true
+						break
+					}
+				}
+				if !ok {
+					writeJSON(w, map[string]any{"error": "not a valid Word document (.docx)"})
+					return
+				}
+			}
+			if err := os.WriteFile(templateFile, data, 0o600); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			writeJSON(w, map[string]any{"ok": true})
+		case http.MethodDelete:
+			_ = os.Remove(templateFile)
+			writeJSON(w, map[string]any{"ok": true})
+		default:
+			_, err := os.Stat(templateFile)
+			writeJSON(w, map[string]any{"present": err == nil, "placeholders": report.TemplatePlaceholders})
+		}
+	})
+
 	// Set a finding's triage status (open | confirmed | false-positive | fixed).
 	mux.HandleFunc("/finding/triage", func(w http.ResponseWriter, r *http.Request) {
 		var in struct {
@@ -1905,7 +1950,16 @@ REASON: <one sentence>`,
 				out, err = rep.XLSX()
 				ctype, fname = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "interlace-report.xlsx"
 			case "docx":
-				out, err = rep.DOCX()
+				// If a Word template was uploaded, populate it; else use the built-in layout.
+				if tmpl, rerr := os.ReadFile(templateFile); rerr == nil && len(tmpl) > 0 {
+					if filled, ferr := rep.FillTemplate(tmpl); ferr == nil {
+						out = filled
+					} else {
+						out, err = rep.DOCX() // fall back on a bad template
+					}
+				} else {
+					out, err = rep.DOCX()
+				}
 				ctype, fname = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "interlace-report.docx"
 			}
 			if err != nil {

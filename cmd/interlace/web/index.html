@@ -749,6 +749,16 @@ Host: httpbin.org
       <button class="btn primary" id="brandSave" style="margin-left:auto">Save branding</button>
       <span id="brandMsg" style="color:var(--muted);font-size:12px"></span>
     </div>
+    <hr style="border:none;border-top:1px solid var(--line);margin:16px 0">
+    <h2 style="font-size:14px">Word report template</h2>
+    <p style="color:var(--muted);margin:2px 0 6px;font-size:12px">Upload a <b>.docx</b> with these placeholders; the <b>Word</b> report fills your template instead of the built-in layout:</p>
+    <div style="font:11px var(--mono);color:var(--accent2);margin-bottom:8px;word-break:break-word">{{company}} {{target}} {{date}} {{total}} {{high}} {{medium}} {{low}} {{info}} {{summary}} {{findings}}</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn" id="tmplUploadBtn">Upload .docx</button>
+      <input type="file" id="tmplFile" accept=".docx" style="display:none">
+      <span id="tmplStatus" style="color:var(--muted);font-size:12px"></span>
+      <button class="btn ghost" id="tmplRemove" style="margin-left:auto;display:none">Remove</button>
+    </div>
   </div>
 </div>
 
@@ -2155,6 +2165,22 @@ $('#brandSave').addEventListener('click', async ()=>{
   $('#brandMsg').textContent='saved ✓'; setTimeout(()=>{ const m=$('#brandMsg'); if(m) m.textContent=''; },1500);
 });
 $('#setupBtn').addEventListener('click', loadBranding);
+// Word report template.
+async function loadTemplateStatus(){ try{ const t=await (await fetch('/report/template')).json();
+  $('#tmplStatus').textContent = t.present?'✓ template uploaded — Word report uses it':'no template — Word report uses the built-in layout';
+  $('#tmplStatus').style.color = t.present?'var(--green)':'var(--muted)';
+  $('#tmplRemove').style.display = t.present?'':'none'; }catch(e){} }
+$('#tmplUploadBtn').addEventListener('click', ()=>$('#tmplFile').click());
+$('#tmplFile').addEventListener('change', async e=>{ const f=e.target.files[0]; if(!f) return;
+  $('#tmplStatus').textContent='uploading…'; $('#tmplStatus').style.color='var(--muted)';
+  const buf=await f.arrayBuffer();
+  const r=await (await fetch('/report/template',{method:'POST',headers:{'Content-Type':'application/octet-stream'},body:buf})).json();
+  if(r.error){ $('#tmplStatus').textContent=r.error; $('#tmplStatus').style.color='var(--red)'; }
+  else loadTemplateStatus();
+  e.target.value='';
+});
+$('#tmplRemove').addEventListener('click', async ()=>{ await fetch('/report/template',{method:'DELETE'}); loadTemplateStatus(); });
+$('#setupBtn').addEventListener('click', loadTemplateStatus);
 $('#setup').addEventListener('click', e=>{ if(e.target.id==='setup') $('#setup').classList.remove('show'); });
 
 /* resizable split (proxy view) */
