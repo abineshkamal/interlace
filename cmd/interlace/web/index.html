@@ -99,9 +99,9 @@
   .detail{flex:1 1 45%;min-height:80px;display:flex;overflow:hidden;background:var(--bg)}
   .pane{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
   .pane:last-child{border-right:none}
-  .pane h3{margin:0;padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .pane h3{margin:0;padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);font:11px var(--sans);font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px 6px;flex-wrap:wrap;min-height:34px}
   .pane h3 .badge{font-weight:600;text-transform:none;letter-spacing:0}
-  .pane h3 .right{margin-left:auto;display:flex;gap:6px;align-items:center}
+  .pane h3 .right{margin-left:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
   .pane pre{margin:0;flex:1;overflow:auto;padding:12px;font:12px/1.6 var(--mono);white-space:pre-wrap;word-break:break-word;color:var(--fg)}
   .hhead{color:var(--accent)} .hname{color:var(--accent2)} .hval{color:var(--fg)}
   .empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--muted);text-align:center;padding:20px;font-size:13px}
@@ -316,8 +316,11 @@
           <input class="tin" id="ptUserField" placeholder="username field (optional)" style="flex:1">
           <input class="tin" id="ptPassField" placeholder="password field (optional)" style="flex:1">
         </div>
-        <input class="tin" id="ptSuccess" placeholder="success text/regex (optional)" style="width:100%">
+        <input class="tin" id="ptSuccess" placeholder="success text/regex (optional)" style="width:100%;margin-bottom:6px">
+        <input class="tin" id="ptTotp" placeholder="TOTP/2FA secret — base32 (optional)" style="width:100%">
       </div>
+      <label class="pl">Extra URLs to crawl <span style="font-weight:400;text-transform:none">(optional — one per line; post-login areas / deep links)</span></label>
+      <textarea class="tin" id="ptExtra" placeholder="/admin&#10;/settings/profile&#10;https://app.example.com/dashboard" style="width:100%;height:56px;resize:vertical;margin-bottom:10px;font:12px var(--mono)"></textarea>
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
         <label class="pl" style="margin:0">Crawl pages</label>
         <input class="tin" id="ptPages" type="number" value="150" min="1" max="500" style="width:80px">
@@ -1340,7 +1343,8 @@ async function ptRun(){
   const body={ target, maxPages:parseInt($('#ptPages').value)||150, screenshot:$('#ptShot').checked,
     authMode:$('#ptAuth').value, loginUrl:$('#ptLoginUrl').value.trim(), username:$('#ptUser').value,
     password:$('#ptPass').value, userField:$('#ptUserField').value.trim(), passField:$('#ptPassField').value.trim(),
-    successRegex:$('#ptSuccess').value.trim() };
+    successRegex:$('#ptSuccess').value.trim(), totpSecret:$('#ptTotp').value.trim(),
+    extraUrls:$('#ptExtra').value.split('\n').map(s=>s.trim()).filter(Boolean) };
   $('#ptLog').textContent=''; ptCrawled=0;
   $('#ptCrawlCount').style.display='none'; $('#ptNote').style.display='none'; $('#ptOpenTarget').style.display='none';
   ptLine('Starting engagement…','phase');

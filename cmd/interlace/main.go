@@ -2357,9 +2357,11 @@ type engagementReq struct {
 	LoginURL     string `json:"loginUrl"`
 	Username     string `json:"username"`
 	Password     string `json:"password"`
-	UserField    string `json:"userField"`
-	PassField    string `json:"passField"`
-	SuccessRegex string `json:"successRegex"`
+	UserField    string   `json:"userField"`
+	PassField    string   `json:"passField"`
+	SuccessRegex string   `json:"successRegex"`
+	TOTPSecret   string   `json:"totpSecret"` // optional base32 TOTP secret for MFA
+	ExtraURLs    []string `json:"extraUrls"`  // extra crawl seeds (post-login/deep links)
 }
 
 // runEngagement drives a full automated assessment: optional form login, crawl,
@@ -2401,7 +2403,7 @@ func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *
 		res, lerr := login.Perform(ctx, login.Config{
 			LoginURL: cfg.LoginURL, Username: cfg.Username, Password: cfg.Password,
 			UserField: cfg.UserField, PassField: cfg.PassField,
-			SuccessRegex: cfg.SuccessRegex, Insecure: insecure,
+			SuccessRegex: cfg.SuccessRegex, TOTPSecret: cfg.TOTPSecret, Insecure: insecure,
 		})
 		switch {
 		case lerr != nil:
@@ -2427,7 +2429,21 @@ func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *
 	phase("crawl", fmt.Sprintf("crawling %s (up to %d pages)", cfg.Target, maxPages))
 	seed := crawler.Seed{URL: cfg.Target}
 	if loginLanding != "" {
-		seed.Extra = []string{loginLanding}
+		seed.Extra = append(seed.Extra, loginLanding)
+	}
+	// User-supplied extra entry points (post-login areas / deep links a link
+	// crawl can't reach), resolved against the target.
+	for _, ex := range cfg.ExtraURLs {
+		ex = strings.TrimSpace(ex)
+		if ex == "" {
+			continue
+		}
+		if abs, perr := u.Parse(ex); perr == nil {
+			seed.Extra = append(seed.Extra, abs.String())
+		}
+	}
+	if len(seed.Extra) > 0 {
+		phase("crawl", fmt.Sprintf("seeding %d extra entry point(s)", len(seed.Extra)))
 	}
 	pages, _ := crawler.Crawl(ctx, seed, insecure, sc.InScope,
 		processFlow, func(pr crawler.Progress) {

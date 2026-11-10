@@ -11,7 +11,11 @@ package login
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // TOTP (RFC 6238) is defined on HMAC-SHA1
 	"crypto/tls"
+	"encoding/base32"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +36,8 @@ type Config struct {
 	UserField    string // optional; auto-detected if empty
 	PassField    string // optional; auto-detected if empty
 	SuccessRegex string // optional; must appear in the post-login response
+	TOTPSecret   string // optional base32 secret for TOTP (RFC 6238) 2-step MFA
+	OTPField     string // optional OTP field name; auto-detected if empty
 	Insecure     bool
 }
 
@@ -49,6 +55,7 @@ type formInfo struct {
 	values    url.Values
 	userField string
 	passField string
+	otpField  string
 }
 
 // Perform executes the login and returns the captured session cookies.
@@ -116,6 +123,53 @@ func Perform(ctx context.Context, cfg Config) (Result, error) {
 	finalBody, _ := io.ReadAll(io.LimitReader(postResp.Body, 4<<20))
 	postResp.Body.Close()
 
+	// 3b. Optional TOTP (RFC 6238) second step: if a secret is configured and the
+	// post-credential page shows an OTP form, generate the code and submit it.
+	mfaNote := ""
+	if cfg.TOTPSecret != "" {
+		if of, ok := findOTPForm(string(finalBody), cfg.OTPField); ok {
+			code, cerr := totpCode(cfg.TOTPSecret, time.Now())
+			if cerr != nil {
+				mfaNote = " (MFA: bad TOTP secret: " + cerr.Error() + ")"
+			} else {
+				of.values.Set(of.otpField, code)
+				cur := postResp.Request.URL
+				otpAction := cur
+				if of.action != "" {
+					if a, aerr := url.Parse(of.action); aerr == nil {
+						otpAction = cur.ResolveReference(a)
+					}
+				}
+				om := strings.ToUpper(of.method)
+				var r2 *http.Response
+				var e2 error
+				if om == http.MethodGet {
+					u := *otpAction
+					u.RawQuery = of.values.Encode()
+					rq, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+					rq.Header.Set("User-Agent", "Interlace-Pentest")
+					r2, e2 = client.Do(rq)
+				} else {
+					rq, _ := http.NewRequestWithContext(ctx, http.MethodPost, otpAction.String(), strings.NewReader(of.values.Encode()))
+					rq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+					rq.Header.Set("User-Agent", "Interlace-Pentest")
+					r2, e2 = client.Do(rq)
+				}
+				if e2 == nil {
+					finalBody, _ = io.ReadAll(io.LimitReader(r2.Body, 4<<20))
+					r2.Body.Close()
+					postResp = r2
+					actionURL = otpAction
+					mfaNote = " (MFA: TOTP submitted)"
+				} else {
+					mfaNote = " (MFA: OTP submit failed: " + e2.Error() + ")"
+				}
+			}
+		} else {
+			mfaNote = " (MFA: no OTP form detected after login)"
+		}
+	}
+
 	// 4. Collect cookies for the target host.
 	cookieHeader := cookieHeaderFor(jar, actionURL)
 
@@ -142,7 +196,96 @@ func Perform(ctx context.Context, cfg Config) (Result, error) {
 	default:
 		res.OK, res.Detail = false, "no session cookie was set — login did not succeed"
 	}
+	res.Detail += mfaNote
 	return res, nil
+}
+
+// totpCode computes the RFC 6238 TOTP (6-digit, 30s step, SHA-1) for a base32
+// secret at time t.
+func totpCode(secret string, t time.Time) (string, error) {
+	s := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(secret), " ", ""))
+	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(s)
+	if err != nil {
+		return "", err
+	}
+	counter := uint64(t.Unix()) / 30
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, counter)
+	mac := hmac.New(sha1.New, key)
+	mac.Write(buf)
+	sum := mac.Sum(nil)
+	off := sum[len(sum)-1] & 0x0f
+	code := (binary.BigEndian.Uint32(sum[off:off+4]) & 0x7fffffff) % 1000000
+	return fmt.Sprintf("%06d", code), nil
+}
+
+var otpNameRe = regexp.MustCompile(`(?i)(otp|mfa|2fa|passcode|one.?time|auth.?code|verif|token|code|pin)`)
+
+// findOTPForm locates a one-time-code form (a form with an OTP-like field and no
+// password field) in the post-credential page, for 2-step MFA.
+func findOTPForm(htmlStr, otpField string) (formInfo, bool) {
+	doc, err := html.Parse(strings.NewReader(htmlStr))
+	if err != nil {
+		return formInfo{}, false
+	}
+	var forms []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "form" {
+			forms = append(forms, n)
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	for _, f := range forms {
+		fi := formInfo{values: url.Values{}, method: "post"}
+		fi.action = attr(f, "action")
+		if m := attr(f, "method"); m != "" {
+			fi.method = m
+		}
+		hasPass := false
+		otp := ""
+		var textFields []string
+		var inputs func(*html.Node)
+		inputs = func(n *html.Node) {
+			if n.Type == html.ElementNode && (n.Data == "input" || n.Data == "select" || n.Data == "textarea") {
+				name := attr(n, "name")
+				typ := strings.ToLower(attr(n, "type"))
+				if name != "" {
+					fi.values.Set(name, attr(n, "value"))
+					switch {
+					case typ == "password":
+						hasPass = true
+					case otpField != "" && name == otpField:
+						otp = name
+					case otp == "" && otpField == "" && (typ == "text" || typ == "tel" || typ == "number" || typ == "") && otpNameRe.MatchString(name):
+						otp = name
+					}
+					if typ == "text" || typ == "tel" || typ == "number" {
+						textFields = append(textFields, name)
+					}
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				inputs(c)
+			}
+		}
+		inputs(f)
+		if hasPass {
+			continue // still the credential form
+		}
+		if otp == "" && otpField == "" && len(textFields) == 1 {
+			otp = textFields[0] // a single visible field — almost certainly the code
+		}
+		if otp != "" {
+			fi.otpField = otp
+			return fi, true
+		}
+	}
+	return formInfo{}, false
 }
 
 // findLoginForm parses HTML and returns the form that contains a password input.

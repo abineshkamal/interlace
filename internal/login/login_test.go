@@ -1,6 +1,9 @@
 package login
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 const loginPage = `<html><body>
 <form action="/doLogin" method="post">
@@ -55,5 +58,45 @@ func TestExtractForms(t *testing.T) {
 	}
 	if forms[1].Values.Get("t") != "9" {
 		t.Errorf("form1 hidden value not preserved: %q", forms[1].Values.Get("t"))
+	}
+}
+
+func TestTOTPCode(t *testing.T) {
+	// RFC 6238 test vector: ASCII secret "12345678901234567890" (base32 below),
+	// SHA-1, at T=59s (counter 1) the 6-digit code is 287082.
+	secret := "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+	code, err := totpCode(secret, time.Unix(59, 0))
+	if err != nil {
+		t.Fatalf("totpCode: %v", err)
+	}
+	if code != "287082" {
+		t.Errorf("TOTP at T=59 = %q, want 287082", code)
+	}
+	// A lower-case, spaced secret must also decode.
+	if c2, err := totpCode("gezd gnbv gy3t qojq gezd gnbv gy3t qojq", time.Unix(59, 0)); err != nil || c2 != "287082" {
+		t.Errorf("spaced/lowercase secret = %q, %v", c2, err)
+	}
+}
+
+func TestFindOTPForm(t *testing.T) {
+	page := `<html><body>Enter your code
+	  <form action="/mfa/verify" method="post">
+	    <input type="hidden" name="csrf" value="x9">
+	    <input type="text" name="otp" autocomplete="one-time-code">
+	    <button>Verify</button>
+	  </form></body></html>`
+	fi, ok := findOTPForm(page, "")
+	if !ok {
+		t.Fatal("expected to find an OTP form")
+	}
+	if fi.otpField != "otp" {
+		t.Errorf("otpField = %q, want otp", fi.otpField)
+	}
+	if fi.values.Get("csrf") != "x9" {
+		t.Errorf("hidden csrf not preserved: %q", fi.values.Get("csrf"))
+	}
+	// A credential form (has a password) must NOT be treated as an OTP form.
+	if _, ok := findOTPForm(`<form><input type=password name=p><input name=u></form>`, ""); ok {
+		t.Error("password form should not be detected as OTP form")
 	}
 }

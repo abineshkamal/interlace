@@ -4,6 +4,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // TOTP is defined on HMAC-SHA1
+	"encoding/base32"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -322,6 +326,36 @@ func main() {
 		}
 		fmt.Fprint(w, `<html><body>Invalid. <input type="password" name="passw"></body></html>`)
 	})
+	// --- 2-step MFA (TOTP) login flow, for testing authenticated scans ---
+	const mfaSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+	mux.HandleFunc("/mfaform", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><form action="/mfalogin" method="post">
+<input name="uid"><input type="password" name="passw"><button>Sign in</button></form></body></html>`)
+	})
+	mux.HandleFunc("/mfalogin", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		w.Header().Set("Content-Type", "text/html")
+		if r.FormValue("uid") == "admin" && r.FormValue("passw") == "admin" {
+			// Step 2: ask for the one-time code.
+			fmt.Fprint(w, `<html><body>Enter your authentication code
+<form action="/mfaverify" method="post"><input type="hidden" name="csrf" value="z1">
+<input type="text" name="otp" autocomplete="one-time-code"><button>Verify</button></form></body></html>`)
+			return
+		}
+		fmt.Fprint(w, `<html><body>Invalid. <input type="password" name="passw"></body></html>`)
+	})
+	mux.HandleFunc("/mfaverify", func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		if r.FormValue("otp") == totp(mfaSecret, time.Now()) {
+			http.SetCookie(w, &http.Cookie{Name: "authsess", Value: "ok-admin-1", Path: "/"})
+			http.Redirect(w, r, "/dashboard", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body>Bad code. <input type="text" name="otp"></body></html>`)
+	})
+
 	// Authenticated landing page (GET-able) linking to the protected area, so an
 	// authenticated crawl seeded from the login redirect discovers post-login pages.
 	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
@@ -379,4 +413,19 @@ func main() {
 
 	fmt.Println("vulnerable test server on http://127.0.0.1:9000")
 	_ = http.ListenAndServe("127.0.0.1:9000", mux)
+}
+
+// totp computes an RFC 6238 6-digit TOTP (SHA-1, 30s) for a base32 secret.
+func totp(secret string, t time.Time) string {
+	key, err := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(strings.ReplaceAll(secret, " ", "")))
+	if err != nil {
+		return ""
+	}
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(t.Unix())/30)
+	m := hmac.New(sha1.New, key)
+	m.Write(buf)
+	s := m.Sum(nil)
+	o := s[len(s)-1] & 0x0f
+	return fmt.Sprintf("%06d", (binary.BigEndian.Uint32(s[o:o+4])&0x7fffffff)%1000000)
 }
