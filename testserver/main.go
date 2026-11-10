@@ -316,14 +316,35 @@ func main() {
 		w.Header().Set("Content-Type", "text/html")
 		if r.FormValue("uid") == "admin" && r.FormValue("passw") == "admin" {
 			http.SetCookie(w, &http.Cookie{Name: "authsess", Value: "ok-admin-1", Path: "/"})
-			fmt.Fprint(w, "<html><body>Welcome, admin. You are signed in.</body></html>")
+			// Real apps redirect the login POST to a GET-able landing page.
+			http.Redirect(w, r, "/dashboard", http.StatusFound)
 			return
 		}
 		fmt.Fprint(w, `<html><body>Invalid. <input type="password" name="passw"></body></html>`)
 	})
+	// Authenticated landing page (GET-able) linking to the protected area, so an
+	// authenticated crawl seeded from the login redirect discovers post-login pages.
+	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if c, err := r.Cookie("authsess"); err == nil && c.Value == "ok-admin-1" {
+			fmt.Fprint(w, `<html><body><h1>Dashboard</h1>Welcome, admin.
+<ul><li><a href="/account">My account</a></li>
+<li><a href="/transfer?to=2&amount=100">Transfer</a></li>
+<li><a href="/massassign">Edit profile</a></li></ul></body></html>`)
+			return
+		}
+		fmt.Fprint(w, "<html>Please log in.</html>")
+	})
 	mux.HandleFunc("/account", func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie("authsess"); err == nil && c.Value == "ok-admin-1" {
 			fmt.Fprint(w, "<html>Account balance: $4,200.00 (acct #8842)</html>")
+			return
+		}
+		fmt.Fprint(w, "<html>Please log in.</html>")
+	})
+	mux.HandleFunc("/transfer", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie("authsess"); err == nil && c.Value == "ok-admin-1" {
+			fmt.Fprintf(w, "<html>Transferred %s to account %s</html>", r.URL.Query().Get("amount"), r.URL.Query().Get("to"))
 			return
 		}
 		fmt.Fprint(w, "<html>Please log in.</html>")

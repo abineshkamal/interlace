@@ -2395,6 +2395,7 @@ func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *
 
 	// Optional authenticated login.
 	authed := false
+	loginLanding := ""
 	if cfg.AuthMode == "form" {
 		phase("login", "logging in at "+cfg.LoginURL)
 		res, lerr := login.Perform(ctx, login.Config{
@@ -2408,7 +2409,11 @@ func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *
 		case res.OK:
 			_ = sess.Set([]session.Header{{Name: "Cookie", Value: res.CookieHeader}})
 			authed = true
+			loginLanding = res.FinalURL
 			phase("login", "authenticated ✓ ("+res.Detail+")")
+			if loginLanding != "" {
+				phase("login", "post-login landing page: "+loginLanding+" (seeded into crawl)")
+			}
 		default:
 			phase("login", "login failed: "+res.Detail+" — continuing unauthenticated")
 		}
@@ -2420,7 +2425,11 @@ func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *
 		maxPages = 150
 	}
 	phase("crawl", fmt.Sprintf("crawling %s (up to %d pages)", cfg.Target, maxPages))
-	pages, _ := crawler.Crawl(ctx, crawler.Seed{URL: cfg.Target}, insecure, sc.InScope,
+	seed := crawler.Seed{URL: cfg.Target}
+	if loginLanding != "" {
+		seed.Extra = []string{loginLanding}
+	}
+	pages, _ := crawler.Crawl(ctx, seed, insecure, sc.InScope,
 		processFlow, func(pr crawler.Progress) {
 			emit(map[string]any{"phase": "crawl", "url": pr.URL, "status": pr.Status, "flowId": pr.ID})
 		}, maxPages, sess)

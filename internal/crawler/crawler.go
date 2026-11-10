@@ -21,7 +21,8 @@ const maxBody = 8 << 20
 
 // Seed is the starting point for a crawl.
 type Seed struct {
-	URL string
+	URL   string
+	Extra []string // additional seed URLs (e.g. the post-login landing page)
 }
 
 // Progress reports a single crawled page.
@@ -62,6 +63,16 @@ func Crawl(ctx context.Context, seed Seed, insecure bool, inScope func(host stri
 
 	visited := map[string]bool{}
 	queue := []*url.URL{start}
+	// Also seed from any extra URLs (e.g. the page the login redirected to) so
+	// authenticated areas not linked from the public entry point get crawled.
+	for _, ex := range seed.Extra {
+		if ex == "" {
+			continue
+		}
+		if eu, perr := url.Parse(ex); perr == nil && eu.Host != "" {
+			queue = append(queue, eu)
+		}
+	}
 	count := 0
 
 	for len(queue) > 0 && count < maxPages {
