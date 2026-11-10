@@ -1,15 +1,77 @@
 package report
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // Meta is the remediation knowledge for a finding type: what it means for the
-// business, how to fix it, and standard references (CWE / OWASP Top 10).
+// business, how to fix it, standard references (CWE / OWASP Top 10), and a
+// representative CVSS v3.1 base score for the weakness class.
 type Meta struct {
 	Impact      string
 	Remediation string
-	CWE         string // e.g. "CWE-79"
-	CWEName     string // e.g. "Improper Neutralization of Input During Web Page Generation"
-	OWASP       string // e.g. "A03:2021 – Injection"
+	CWE         string  // e.g. "CWE-79"
+	CWEName     string  // e.g. "Improper Neutralization of Input During Web Page Generation"
+	OWASP       string  // e.g. "A03:2021 – Injection"
+	CVSS        float64 // CVSS v3.1 base score (0 = informational / not scored)
+	CVSSVector  string  // CVSS v3.1 base vector (without the "CVSS:3.1/" prefix)
+}
+
+// CVSSRating maps the base score to its qualitative severity band.
+func (m Meta) CVSSRating() string {
+	switch {
+	case m.CVSS >= 9.0:
+		return "Critical"
+	case m.CVSS >= 7.0:
+		return "High"
+	case m.CVSS >= 4.0:
+		return "Medium"
+	case m.CVSS > 0:
+		return "Low"
+	default:
+		return "None"
+	}
+}
+
+// CVSSText renders the score for a report, e.g. "7.5 (High) — CVSS:3.1/AV:N/…".
+func (m Meta) CVSSText() string {
+	if m.CVSS <= 0 {
+		return "N/A (informational)"
+	}
+	return fmt.Sprintf("%.1f (%s) — CVSS:3.1/%s", m.CVSS, m.CVSSRating(), m.CVSSVector)
+}
+
+// cvssFor returns a representative CVSS v3.1 base score + vector for a check.
+func cvssFor(check string) (float64, string) {
+	switch check {
+	case "sqli-error", "sqli-time", "sqli-boolean", "nosqli", "ssti", "cmdi", "insecure-deser", "jwt-alg-none":
+		return 9.8, "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	case "ssrf", "blind-ssrf":
+		return 8.6, "AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:N/A:N"
+	case "mass-assignment", "broken-access-control":
+		return 8.1, "AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N"
+	case "path-traversal", "xxe", "exposed-secret", "cors-wildcard-credentials":
+		return 7.5, "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+	case "proto-pollution", "ldapi":
+		return 7.3, "AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L"
+	case "http-request-smuggling", "cache-poisoning":
+		return 7.5, "AV:N/AC:H/PR:N/UI:N/S:C/C:L/I:H/A:N"
+	case "cors-wildcard", "cors-origin-reflection", "cors-null-origin":
+		return 6.5, "AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N"
+	case "reflected-xss", "open-redirect", "crlf", "host-header-injection", "cookie-no-samesite":
+		return 6.1, "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N"
+	case "missing-hsts", "cookie-no-secure":
+		return 5.9, "AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N"
+	case "graphql-introspection", "cookie-no-httponly":
+		return 5.3, "AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N"
+	case "missing-csp", "missing-xfo":
+		return 4.3, "AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:N"
+	case "missing-nosniff", "missing-referrer-policy":
+		return 3.7, "AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:N/A:N"
+	default: // server-version, x-powered-by, jwt-observed, graphql-endpoint, unknown → informational
+		return 0, ""
+	}
 }
 
 // CWEURL returns the MITRE reference URL for the finding's CWE, or "".
@@ -39,13 +101,15 @@ func (m Meta) Reference() string {
 // MetaFor returns the knowledge-base entry for a scanner check slug. Unknown
 // checks get a generic entry so the report is always complete.
 func MetaFor(check string) Meta {
-	if m, ok := kb[check]; ok {
-		return m
+	m, ok := kb[check]
+	if !ok {
+		m = Meta{
+			Impact:      "May weaken the security posture of the application; review in context to determine exploitability and business impact.",
+			Remediation: "Review the affected request/response and apply the appropriate hardening for this issue class.",
+		}
 	}
-	return Meta{
-		Impact:      "May weaken the security posture of the application; review in context to determine exploitability and business impact.",
-		Remediation: "Review the affected request/response and apply the appropriate hardening for this issue class.",
-	}
+	m.CVSS, m.CVSSVector = cvssFor(check)
+	return m
 }
 
 // kb maps every scanner check slug to its remediation knowledge.

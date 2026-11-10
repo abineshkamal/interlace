@@ -26,6 +26,11 @@
   .pill{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:5px;color:#fff}
   .pill.high{background:var(--high)} .pill.medium{background:var(--medium)}
   .pill.low{background:var(--low)} .pill.info{background:var(--info)}
+  .cvss{margin-left:auto;font:11px ui-monospace,Consolas,monospace;font-weight:600;padding:2px 8px;border-radius:5px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+  .cvss.cvss-Critical{color:#fff;background:#7f1d1d;border-color:#7f1d1d}
+  .cvss.cvss-High{color:var(--high);border-color:var(--high)}
+  .cvss.cvss-Medium{color:var(--medium);border-color:var(--medium)}
+  .cvss.cvss-Low{color:var(--low);border-color:var(--low)}
   .meta{color:var(--muted);font:12px ui-monospace,Consolas,monospace;margin:2px 0}
   .detail{margin:8px 0 0}
   .row{margin:8px 0 0;display:grid;grid-template-columns:120px 1fr;gap:10px;align-items:start}
@@ -62,7 +67,7 @@
   <h3 style="margin:22px 0 6px;color:#6d28d9">{{.Host}} <span style="color:#64748b;font-weight:400;font-size:13px">({{len .Findings}})</span></h3>
   {{range .Findings}}
   <div class="finding {{.Severity}}">
-    <h3><span class="pill {{.Severity}}">{{.Severity}}</span> {{.Title}}</h3>
+    <h3><span class="pill {{.Severity}}">{{.Severity}}</span> {{.Title}} <span class="cvss cvss-{{.CVSSRating}}">CVSS {{.CVSS}}</span></h3>
     <div class="row"><span class="k">Affected URL</span> <span class="v">{{if .URL}}{{.URL}}{{else}}{{.Host}}{{end}}</span></div>
     <div class="meta">check: {{.Check}} &nbsp;·&nbsp; source: {{.Source}}</div>
     <div class="row"><span class="k">Description</span> <span class="v">{{.Detail}}</span></div>

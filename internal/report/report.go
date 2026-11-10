@@ -116,6 +116,7 @@ func (r Report) PDF() ([]byte, error) {
 		pdf.MultiCell(0, 7, fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), "", "L", false)
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Helvetica", "", 10)
+		section(pdf, "CVSS v3.1", m.CVSSText())
 		section(pdf, "Affected URL", nz(f.URL, f.Host))
 		section(pdf, "Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
 		if f.Evidence != "" {
@@ -255,7 +256,7 @@ func (r Report) XLSX() ([]byte, error) {
 	// Findings sheet.
 	const sheet = "Findings"
 	f.NewSheet(sheet)
-	headers := []string{"#", "Severity", "Title", "Affected URL", "Description", "Impact", "Recommendation", "CWE", "References", "Evidence", "Analyst note"}
+	headers := []string{"#", "Severity", "CVSS", "CVSS Vector", "Title", "Affected URL", "Description", "Impact", "Recommendation", "CWE", "References", "Evidence", "Analyst note"}
 	for i, h := range headers {
 		col := string(rune('A' + i))
 		f.SetCellValue(sheet, col+"1", h)
@@ -263,14 +264,20 @@ func (r Report) XLSX() ([]byte, error) {
 	for i, fn := range r.sorted() {
 		rw := i + 2
 		m := MetaFor(fn.Check)
-		vals := []any{i + 1, fn.Severity, fn.Title, nz(fn.URL, fn.Host), nz(fn.Detail, fn.Title),
+		cvss := "N/A"
+		vector := ""
+		if m.CVSS > 0 {
+			cvss = fmt.Sprintf("%.1f (%s)", m.CVSS, m.CVSSRating())
+			vector = "CVSS:3.1/" + m.CVSSVector
+		}
+		vals := []any{i + 1, fn.Severity, cvss, vector, fn.Title, nz(fn.URL, fn.Host), nz(fn.Detail, fn.Title),
 			m.Impact, m.Remediation, m.CWE, m.Reference(), fn.Evidence, fn.Note}
 		for ci, v := range vals {
 			col := string(rune('A' + ci))
 			f.SetCellValue(sheet, cell(col, rw), v)
 		}
 	}
-	widths := map[string]float64{"C": 34, "D": 44, "E": 50, "F": 50, "G": 50, "I": 40, "J": 40}
+	widths := map[string]float64{"D": 34, "E": 34, "F": 44, "G": 50, "H": 50, "I": 50, "K": 40, "L": 40}
 	for col, wdt := range widths {
 		f.SetColWidth(sheet, col, col, wdt)
 	}
@@ -331,6 +338,7 @@ func (r Report) DOCX() ([]byte, error) {
 	for i, f := range r.sorted() {
 		m := MetaFor(f.Check)
 		para(fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), "", true, 14)
+		labeled("CVSS v3.1", m.CVSSText())
 		labeled("Affected URL", nz(f.URL, f.Host))
 		labeled("Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
 		if f.Evidence != "" {

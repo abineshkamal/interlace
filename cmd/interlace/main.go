@@ -1713,6 +1713,8 @@ Provide, in concise markdown (under 250 words):
 		// Group findings by host and attach remediation knowledge.
 		type repFinding struct {
 			scanner.Finding
+			CVSS        string
+			CVSSRating  string
 			Impact      string
 			Remediation string
 			Reference   string
@@ -1729,7 +1731,7 @@ Provide, in concise markdown (under 250 words):
 				order = append(order, f.Host)
 			}
 			m := report.MetaFor(f.Check)
-			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
+			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.CVSSText(), m.CVSSRating(), m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
 		}
 		var groups []hostGroup
 		for _, h := range order {
