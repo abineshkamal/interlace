@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -111,6 +112,8 @@ func Open(path string) (*Store, error) {
 		`ALTER TABLE findings ADD COLUMN screenshot BLOB`,
 		`ALTER TABLE findings ADD COLUMN req_raw TEXT`,
 		`ALTER TABLE findings ADD COLUMN resp_raw TEXT`,
+		`ALTER TABLE findings ADD COLUMN triage TEXT DEFAULT 'open'`,
+		`ALTER TABLE findings ADD COLUMN retest TEXT`,
 	} {
 		if _, err := db.Exec(col); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			db.Close()
@@ -261,9 +264,10 @@ func (s *Store) Clear() error {
 // whether a new row was actually inserted and, if so, its ID.
 func (s *Store) InsertFinding(f *scanner.Finding) (id int64, inserted bool, err error) {
 	res, err := s.db.Exec(
-		`INSERT OR IGNORE INTO findings (flow_id, ts, severity, check_slug, title, detail, host, url, evidence, source, dedup_key)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT OR IGNORE INTO findings (flow_id, ts, severity, check_slug, title, detail, host, url, evidence, source, dedup_key, req_raw, resp_raw)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		f.FlowID, f.Time.UnixMilli(), f.Severity, f.Check, f.Title, f.Detail, f.Host, f.URL, f.Evidence, f.Source, f.Key,
+		nullIfEmpty(f.ReqRaw), nullIfEmpty(f.RespRaw),
 	)
 	if err != nil {
 		return 0, false, fmt.Errorf("insert finding: %w", err)
@@ -279,7 +283,7 @@ func (s *Store) InsertFinding(f *scanner.Finding) (id int64, inserted bool, err 
 // ListFindings returns findings most-severe first, then newest.
 func (s *Store) ListFindings() ([]scanner.Finding, error) {
 	rows, err := s.db.Query(
-		`SELECT id, flow_id, ts, severity, check_slug, title, detail, host, url, evidence, COALESCE(source,'passive'), COALESCE(note,'')
+		`SELECT id, flow_id, ts, severity, check_slug, title, detail, host, url, evidence, COALESCE(source,'passive'), COALESCE(note,''), COALESCE(triage,'open'), COALESCE(retest,'')
 		 FROM findings
 		 ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END, id DESC
 		 LIMIT 2000`)
@@ -292,7 +296,7 @@ func (s *Store) ListFindings() ([]scanner.Finding, error) {
 		var f scanner.Finding
 		var tsMilli int64
 		if err := rows.Scan(&f.ID, &f.FlowID, &tsMilli, &f.Severity, &f.Check,
-			&f.Title, &f.Detail, &f.Host, &f.URL, &f.Evidence, &f.Source, &f.Note); err != nil {
+			&f.Title, &f.Detail, &f.Host, &f.URL, &f.Evidence, &f.Source, &f.Note, &f.Triage, &f.Retest); err != nil {
 			return nil, fmt.Errorf("scan finding: %w", err)
 		}
 		f.Time = time.UnixMilli(tsMilli)
@@ -305,6 +309,41 @@ func (s *Store) ListFindings() ([]scanner.Finding, error) {
 func (s *Store) SetFindingNote(id int64, note string) error {
 	_, err := s.db.Exec(`UPDATE findings SET note = ? WHERE id = ?`, note, id)
 	return err
+}
+
+// SetFindingTriage updates a finding's triage status.
+func (s *Store) SetFindingTriage(id int64, triage string) error {
+	_, err := s.db.Exec(`UPDATE findings SET triage = ? WHERE id = ?`, triage, id)
+	return err
+}
+
+// SetFindingRetest records the result of a retest.
+func (s *Store) SetFindingRetest(id int64, result string) error {
+	_, err := s.db.Exec(`UPDATE findings SET retest = ? WHERE id = ?`, result, id)
+	return err
+}
+
+// FindingRetestInfo returns the data needed to re-run a finding's request.
+// host is the authority (host:port) parsed from the finding URL so the request
+// reaches the right port.
+func (s *Store) FindingRetestInfo(id int64) (scheme, host, reqRaw, evidence string, err error) {
+	row := s.db.QueryRow(
+		`SELECT COALESCE(url,''), COALESCE(host,''), COALESCE(req_raw,''), COALESCE(evidence,'') FROM findings WHERE id = ?`, id)
+	var rawURL, hostCol string
+	if err = row.Scan(&rawURL, &hostCol, &reqRaw, &evidence); err != nil {
+		return "", "", "", "", err
+	}
+	scheme = "https"
+	host = hostCol
+	if u, perr := url.Parse(rawURL); perr == nil && u.Host != "" {
+		host = u.Host // includes port
+		if u.Scheme != "" {
+			scheme = u.Scheme
+		}
+	} else if strings.HasPrefix(rawURL, "http://") {
+		scheme = "http"
+	}
+	return scheme, host, reqRaw, evidence, nil
 }
 
 // SavedRequest is a named, reusable Repeater request.
@@ -351,14 +390,23 @@ func (s *Store) DeleteSavedRequest(id int64) error {
 	return err
 }
 
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // SetFindingEvidence attaches request/response text and an optional screenshot
 // (PNG bytes) to a finding. Nil png leaves any existing screenshot untouched.
 func (s *Store) SetFindingEvidence(id int64, reqRaw, respRaw string, png []byte) error {
+	// Preserve an existing (e.g. active-attack) request/response — only fill in
+	// the crawl request when the finding has none yet.
 	if png != nil {
-		_, err := s.db.Exec(`UPDATE findings SET req_raw=?, resp_raw=?, screenshot=? WHERE id=?`, reqRaw, respRaw, png, id)
+		_, err := s.db.Exec(`UPDATE findings SET req_raw=COALESCE(NULLIF(req_raw,''),?), resp_raw=COALESCE(NULLIF(resp_raw,''),?), screenshot=? WHERE id=?`, reqRaw, respRaw, png, id)
 		return err
 	}
-	_, err := s.db.Exec(`UPDATE findings SET req_raw=?, resp_raw=? WHERE id=?`, reqRaw, respRaw, id)
+	_, err := s.db.Exec(`UPDATE findings SET req_raw=COALESCE(NULLIF(req_raw,''),?), resp_raw=COALESCE(NULLIF(resp_raw,''),?) WHERE id=?`, reqRaw, respRaw, id)
 	return err
 }
 

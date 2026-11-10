@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -34,11 +35,11 @@ import (
 	"interlace/internal/browser"
 	"interlace/internal/ca"
 	"interlace/internal/crawler"
-	"interlace/internal/login"
 	"interlace/internal/fuzzer"
 	"interlace/internal/hub"
 	"interlace/internal/importer"
 	"interlace/internal/intercept"
+	"interlace/internal/login"
 	"interlace/internal/macro"
 	"interlace/internal/matchreplace"
 	"interlace/internal/model"
@@ -110,8 +111,8 @@ func main() {
 	h := hub.New()          // live flows
 	findHub := hub.New()    // live findings
 	interHub := hub.New()   // intercept changes
-	wsHub := hub.New()        // live websocket messages
-	wsInterHub := hub.New()   // ws intercept changes
+	wsHub := hub.New()      // live websocket messages
+	wsInterHub := hub.New() // ws intercept changes
 	ic := intercept.New(interHub)
 	wsIc := wsintercept.New(wsInterHub)
 	mr := matchreplace.Load(filepath.Join(*dataDir, "matchreplace.json"))
@@ -129,7 +130,11 @@ func main() {
 		if msg, err := json.Marshal(summarize(f)); err == nil {
 			h.Broadcast(msg)
 		}
+		reqRaw := flowToRaw(f)
 		for _, find := range scanner.Scan(f) {
+			if find.ReqRaw == "" {
+				find.ReqRaw = reqRaw // store the originating request so passive findings are retestable
+			}
 			fid, inserted, err := st.InsertFinding(&find)
 			if err != nil {
 				log.Printf("store finding: %v", err)
@@ -174,8 +179,8 @@ func main() {
 	rep.SetCSRF(sess)
 	macroStore := macro.Load(filepath.Join(*dataDir, "macro.json"))
 	authzSess := session.Load(filepath.Join(*dataDir, "authz-session.json")) // low-privilege identity
-	authzSender := repeater.New(*insecure)                                    // no session applied
-	aiStore := ai.Load(filepath.Join(*dataDir, "ai.json"))                    // optional AI triage
+	authzSender := repeater.New(*insecure)                                   // no session applied
+	aiStore := ai.Load(filepath.Join(*dataDir, "ai.json"))                   // optional AI triage
 
 	// Plugin SDK: load any custom active-check rules the user has added.
 	if n, err := scanner.LoadRules(filepath.Join(*dataDir, "rules")); err != nil {
@@ -1469,6 +1474,68 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, map[string]any{"ok": true})
 	})
 
+	// Set a finding's triage status (open | confirmed | false-positive | fixed).
+	mux.HandleFunc("/finding/triage", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			ID     int64  `json:"id"`
+			Triage string `json:"triage"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		switch in.Triage {
+		case "open", "confirmed", "false-positive", "fixed":
+		default:
+			http.Error(w, "invalid triage status", http.StatusBadRequest)
+			return
+		}
+		if err := st.SetFindingTriage(in.ID, in.Triage); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	})
+
+	// Retest a finding: re-send its original request and report whether the
+	// evidence indicator still appears (a signal the issue is unfixed).
+	mux.HandleFunc("/finding/retest", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			ID int64 `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		scheme, host, reqRaw, evidence, err := st.FindingRetestInfo(in.ID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if strings.TrimSpace(reqRaw) == "" {
+			writeJSON(w, map[string]any{"error": "no stored request to replay for this finding"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		resp := rep.Send(ctx, repeater.Request{Scheme: scheme, Host: host, Raw: reqRaw})
+		stamp := time.Now().Format("2006-01-02 15:04")
+		tok := extractEvidenceToken(evidence)
+		var result string
+		switch {
+		case resp.Error != "":
+			result = stamp + " · request failed: " + resp.Error
+		case tok == "":
+			result = fmt.Sprintf("%s · HTTP %d · replayed — no evidence token to auto-check; review the response", stamp, resp.Status)
+		case containsNormalized(resp.Body, tok):
+			result = fmt.Sprintf("%s · HTTP %d · evidence still present — likely STILL VULNERABLE", stamp, resp.Status)
+		default:
+			result = fmt.Sprintf("%s · HTTP %d · evidence no longer present — likely FIXED (verify manually)", stamp, resp.Status)
+		}
+		_ = st.SetFindingRetest(in.ID, result)
+		writeJSON(w, map[string]any{"result": result, "status": resp.Status})
+	})
+
 	// Fuzzer: run an Intruder-style attack, streaming one NDJSON result per line.
 	mux.HandleFunc("/fuzz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -1583,8 +1650,8 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, map[string]any{
 			"version": version, "exported": time.Now().Format(time.RFC3339),
 			"flows": flows, "findings": findings,
-			"scope":       map[string][]string{"include": inc, "exclude": exc},
-			"session":     sess.Get(),
+			"scope":        map[string][]string{"include": inc, "exclude": exc},
+			"session":      sess.Get(),
 			"matchreplace": mr.Get(),
 		})
 	})
@@ -1983,7 +2050,43 @@ func parseJSONStringArray(s string) []string {
 	return out
 }
 
-// remediationFor returns short remediation guidance for a check.
+var wsRe = regexp.MustCompile(`\s+`)
+
+// containsNormalized reports whether needle appears in haystack after collapsing
+// all runs of whitespace to a single space in both (evidence snippets are stored
+// whitespace-collapsed, raw bodies are not).
+func containsNormalized(haystack, needle string) bool {
+	n := strings.TrimSpace(wsRe.ReplaceAllString(needle, " "))
+	if n == "" {
+		return false
+	}
+	return strings.Contains(wsRe.ReplaceAllString(haystack, " "), n)
+}
+
+var ilxTokenRe = regexp.MustCompile(`ilx[a-z0-9]{4,}`)
+
+// extractEvidenceToken pulls a RELIABLY checkable literal out of a finding's
+// evidence so a retest can look for it in the replayed response. Returns "" when
+// nothing reliable can be auto-checked (blind/time-based/boolean), so the retest
+// honestly reports "review manually" instead of guessing.
+func extractEvidenceToken(evidence string) string {
+	// Reflected-XSS / reflection marker — always reliable.
+	if m := ilxTokenRe.FindString(evidence); m != "" {
+		return m
+	}
+	// Active-probe evidence ("param … payload: … → matched: …"): the payload is
+	// only a usable literal when it is long enough to be distinctive and is
+	// expected to be reflected (not a blind/error/boolean signal).
+	if strings.Contains(evidence, "payload:") || strings.Contains(evidence, "matched:") || strings.Contains(evidence, "→") {
+		return ""
+	}
+	// Otherwise it's a verbatim body snippet (error/dir-listing/etc.) — reliable.
+	if e := strings.TrimSpace(evidence); len(e) >= 8 && len(e) <= 200 {
+		return e
+	}
+	return ""
+}
+
 // buildSARIF renders findings as a SARIF 2.1.0 log for CI / code-scanning.
 func buildSARIF(findings []scanner.Finding) map[string]any {
 	sarifLevel := func(sev string) string {
@@ -2291,13 +2394,13 @@ func reqURIOf(u *url.URL) string {
 
 // engagementReq is the automated-pentest configuration posted by the UI.
 type engagementReq struct {
-	Target       string `json:"target"`
-	MaxPages     int    `json:"maxPages"`
-	Screenshot   bool   `json:"screenshot"`
-	AuthMode     string `json:"authMode"` // "none" | "form"
-	LoginURL     string `json:"loginUrl"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
+	Target       string   `json:"target"`
+	MaxPages     int      `json:"maxPages"`
+	Screenshot   bool     `json:"screenshot"`
+	AuthMode     string   `json:"authMode"` // "none" | "form"
+	LoginURL     string   `json:"loginUrl"`
+	Username     string   `json:"username"`
+	Password     string   `json:"password"`
 	UserField    string   `json:"userField"`
 	PassField    string   `json:"passField"`
 	SuccessRegex string   `json:"successRegex"`
@@ -2467,8 +2570,8 @@ func authzSweep(ctx context.Context, st *store.Store, sc *scope.Scope, insecure 
 		if vv, _ := v["verdict"].(string); vv == "bypassed" {
 			fnd := scanner.Finding{
 				Severity: scanner.High, Check: "broken-access-control", Source: "active",
-				Title:  "Broken access control / IDOR",
-				Detail: "An authenticated resource returned an equivalent response with authentication removed, indicating authorization is not enforced.",
+				Title:    "Broken access control / IDOR",
+				Detail:   "An authenticated resource returned an equivalent response with authentication removed, indicating authorization is not enforced.",
 				Evidence: fmt.Sprintf("original=%d bytes (HTTP %d), unauthenticated response equivalent", orig.BodyLen, orig.Status),
 				Host:     scanner.HostOf(authority), URL: full.URL, FlowID: full.ID, Time: time.Now(),
 				Key: "broken-access-control|" + scanner.HostOf(authority) + "|" + strings.Split(full.Path, "?")[0],
@@ -2491,9 +2594,9 @@ func authzSweep(ctx context.Context, st *store.Store, sc *scope.Scope, insecure 
 func captureEvidence(ctx context.Context, st *store.Store, host string, progress func(done, total int)) int {
 	findings, _ := st.ListFindings()
 	type job struct {
-		id    int64
-		flow  int64
-		url   string
+		id   int64
+		flow int64
+		url  string
 	}
 	var jobs []job
 	seen := map[string]bool{}

@@ -166,6 +166,18 @@
   .idetail .body p{margin:0 0 14px;color:var(--fg)}
   .idetail .evid{background:var(--bg2);border:1px solid var(--line);border-radius:7px;padding:10px 12px;font:12px var(--mono);color:var(--amber);white-space:pre-wrap;word-break:break-word}
   .idetail .vflow{margin-top:14px}
+  .tstat{display:flex;align-items:center;gap:5px;margin-top:10px;flex-wrap:wrap}
+  .tg{background:var(--bg3);border:1px solid var(--line);color:var(--muted);border-radius:20px;padding:3px 11px;font-size:11.5px;font-weight:600;cursor:pointer;text-transform:capitalize}
+  .tg:hover{color:var(--fg);border-color:var(--line2)}
+  .tg.on{color:#fff}
+  .tg.on.t-open{background:var(--muted);border-color:var(--muted)}
+  .tg.on.t-confirmed{background:var(--red);border-color:var(--red)}
+  .tg.on.t-false-positive{background:var(--faint);border-color:var(--faint)}
+  .tg.on.t-fixed{background:var(--green);border-color:var(--green)}
+  .fstatus{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;border-radius:4px;margin-left:6px;vertical-align:middle}
+  .fstatus.confirmed{background:rgba(255,107,122,.15);color:var(--red)}
+  .fstatus.false-positive{background:var(--bg3);color:var(--faint);text-decoration:line-through}
+  .fstatus.fixed{background:rgba(76,217,149,.15);color:var(--green)}
   .ihint{padding:7px 12px;background:var(--bg2);border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;display:flex;gap:14px}
   .ihint b{color:var(--fg)}
 
@@ -378,6 +390,7 @@
   <div class="issues" style="flex-direction:column">
     <div class="ihint" id="ihint">Passive &amp; active findings. <span id="isummary"></span>
       <select class="tin" id="sevFilter" style="margin-left:10px"><option value="">all severities</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select>
+      <select class="tin" id="statusFilter" style="margin-left:6px"><option value="">all statuses</option><option value="open">open</option><option value="confirmed">confirmed</option><option value="false-positive">false positive</option><option value="fixed">fixed</option></select>
       <span style="margin-left:auto;display:flex;gap:8px">
         <button class="btn" id="aiSummaryBtn">🤖 AI summary</button>
         <button class="btn" id="scheduleBtn">⏱ Schedule</button>
@@ -1015,18 +1028,20 @@ function renderIssueSummary(){
   else badge.style.display='none';
 }
 function ifindHTML(f){
+  const tg=f.triage||'open';
+  const st=tg!=='open'?`<span class="fstatus ${tg}">${tg.replace('-',' ')}</span>`:'';
   return `<div class="ifind" data-id="${f.id}">
     <span class="pill ${f.severity}">${f.severity}</span>
-    <div class="meta"><div class="title">${esc(f.title)}</div>
+    <div class="meta"><div class="title">${esc(f.title)}${st}</div>
       <div class="sub">${esc(f.host)} · ${f.source==='active'?'active':'passive'}</div></div></div>`;
 }
-let sevFilterVal='';
+let sevFilterVal='', statusFilterVal='';
 function renderIssueList(){
   const el=$('#ilist');
   if(!findings.length){ el.innerHTML=`<div class="empty" style="padding:30px">No findings yet. Route traffic through the proxy — issues appear here automatically.</div>`; return; }
   el.innerHTML='';
-  const shown=findings.filter(f=>!sevFilterVal||f.severity===sevFilterVal);
-  if(!shown.length){ el.innerHTML='<div class="empty" style="padding:30px">No '+sevFilterVal+' findings.</div>'; return; }
+  const shown=findings.filter(f=>(!sevFilterVal||f.severity===sevFilterVal)&&(!statusFilterVal||(f.triage||'open')===statusFilterVal));
+  if(!shown.length){ el.innerHTML='<div class="empty" style="padding:30px">No matching findings.</div>'; return; }
   shown.forEach(f=>{
     const t=document.createElement('template'); t.innerHTML=ifindHTML(f).trim();
     const node=t.content.firstElementChild;
@@ -1044,16 +1059,22 @@ function showFinding(id, node){
       <div class="kv">host: <b>${esc(f.host)}</b></div>
       <div class="kv">url: <b>${esc(f.url||'')}</b></div>
       <div class="kv">check: <b>${esc(f.check)}</b> · source: <b>${esc(f.source||'passive')}</b></div>
+      <div class="tstat" id="triageBar">
+        <span style="color:var(--muted);font-size:12px">Status:</span>
+        ${['open','confirmed','false-positive','fixed'].map(s=>`<button class="tg${(f.triage||'open')===s?' on t-'+s:''}" data-tg="${s}">${s.replace('-',' ')}</button>`).join('')}
+      </div>
     </div>
     <div class="body">
       <p>${esc(f.detail)}</p>
       ${f.evidence?`<div class="evid">${esc(f.evidence)}</div>`:''}
       <img id="findShot" src="/finding/screenshot?id=${f.id}" alt="" style="display:none;max-width:100%;margin-top:10px;border:1px solid var(--line);border-radius:6px" onload="this.style.display='block'" onerror="this.remove()">
       <div id="findShotCap" style="display:none"></div>
-      <div class="vflow" style="display:flex;gap:8px">
+      <div class="vflow" style="display:flex;gap:8px;flex-wrap:wrap">
         ${f.flowId?`<button class="btn" id="viewFlow">View request #${f.flowId}</button>`:''}
+        <button class="btn" id="retestBtn" title="Re-send the original request and check if it is still vulnerable">↻ Retest</button>
         <button class="btn primary" id="aiTriageBtn">🤖 Analyze with AI</button>
       </div>
+      <div id="retestMsg" style="margin-top:8px;font:12px var(--mono);color:var(--muted)">${esc(f.retest||'')}</div>
       <div style="margin-top:14px">
         <div class="rlabel" style="margin-bottom:4px">Analyst note</div>
         <textarea class="tin" id="findNote" style="width:100%;min-height:52px;resize:vertical" placeholder="Triage note / comment (shared in the project)…">${esc(f.note||'')}</textarea>
@@ -1073,6 +1094,23 @@ function showFinding(id, node){
   const vf=$('#viewFlow');
   if(vf) vf.addEventListener('click', ()=>{ $('#nav-proxy').click();
     fetch('/flow?id='+f.flowId).then(r=>r.ok?select(f.flowId,null):null); });
+  // Triage status buttons.
+  document.querySelectorAll('#triageBar .tg').forEach(b=>b.addEventListener('click', async ()=>{
+    const tg=b.dataset.tg;
+    try{ await fetch('/finding/triage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:f.id,triage:tg})}); }catch(e){}
+    f.triage=tg;
+    document.querySelectorAll('#triageBar .tg').forEach(x=>{ x.className='tg'+(x.dataset.tg===tg?' on t-'+tg:''); });
+    renderIssueList();
+  }));
+  // Retest.
+  const rb=$('#retestBtn');
+  if(rb) rb.addEventListener('click', async ()=>{
+    rb.disabled=true; const prev=rb.textContent; rb.textContent='↻ Retesting…';
+    try{ const r=await (await fetch('/finding/retest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:f.id})})).json();
+      f.retest=r.result||r.error||''; const m=$('#retestMsg'); if(m) m.textContent=f.retest;
+    }catch(e){ const m=$('#retestMsg'); if(m) m.textContent='retest failed: '+e; }
+    rb.disabled=false; rb.textContent=prev;
+  });
   $('#aiTriageBtn').addEventListener('click', ()=>aiTriage(f));
 }
 async function loadFindings(){
@@ -1289,6 +1327,7 @@ async function saveScope(){
   $('#scopeModal').classList.remove('show'); toast('Scope saved','ok');
 }
 $('#sevFilter').addEventListener('change', e=>{ sevFilterVal=e.target.value; renderIssueList(); });
+$('#statusFilter').addEventListener('change', e=>{ statusFilterVal=e.target.value; renderIssueList(); });
 $('#aiSummaryBtn').addEventListener('click', async ()=>{
   const btn=$('#aiSummaryBtn'); btn.disabled=true; btn.textContent='Summarizing…';
   $('#idetail').innerHTML='<div class="body"><span style="color:var(--muted)">Generating executive summary…</span></div>';

@@ -41,6 +41,10 @@ type Finding struct {
 	Evidence string    `json:"evidence"`
 	Source   string    `json:"source"` // "passive" or "active"
 	Note     string    `json:"note"`   // analyst note / triage comment
+	Triage   string    `json:"triage"` // "open" | "confirmed" | "false-positive" | "fixed"
+	Retest   string    `json:"retest"` // last retest result (human-readable), if any
+	ReqRaw   string    `json:"-"`      // raw attack request (active findings), for retest
+	RespRaw  string    `json:"-"`      // raw response that confirmed the finding
 	Key      string    `json:"-"`      // dedup key
 }
 
@@ -96,21 +100,21 @@ var checks = []check{
 // errorSigs are tight signatures for framework stack traces, debug pages and
 // database errors. They are specific enough to keep false positives low.
 var errorSigs = []*regexp.Regexp{
-	regexp.MustCompile(`Traceback \(most recent call last\):`),           // Python
-	regexp.MustCompile(`\bat [\w$.]+\([\w$]+\.java:\d+\)`),                // Java stack frame
-	regexp.MustCompile(`\bjava\.(lang|util|io|net)\.[A-Za-z.]*Exception`), // Java exception
+	regexp.MustCompile(`Traceback \(most recent call last\):`),                 // Python
+	regexp.MustCompile(`\bat [\w$.]+\([\w$]+\.java:\d+\)`),                     // Java stack frame
+	regexp.MustCompile(`\bjava\.(lang|util|io|net)\.[A-Za-z.]*Exception`),      // Java exception
 	regexp.MustCompile(`(?i)<b>(Fatal error|Warning|Parse error|Notice)</b>:`), // PHP
-	regexp.MustCompile(`(?i)Stack trace:\s*#0`),                           // PHP stack trace
-	regexp.MustCompile(`System\.[A-Za-z.]+Exception:`),                    // .NET
-	regexp.MustCompile(`(?i)Server Error in '.*' Application`),            // ASP.NET YSOD
-	regexp.MustCompile(`(?i)Microsoft OLE DB Provider`),                   // classic ASP / SQL
-	regexp.MustCompile(`\bORA-\d{4,5}\b`),                                 // Oracle
-	regexp.MustCompile(`(?i)You have an error in your SQL syntax`),        // MySQL
-	regexp.MustCompile(`(?i)PostgreSQL.{0,40}(ERROR|query failed)`),       // Postgres
-	regexp.MustCompile(`(?i)Werkzeug Debugger`),                           // Flask debug
-	regexp.MustCompile(`(?i)Whoops, looks like something went wrong`),     // Laravel
-	regexp.MustCompile(`(?i)(ActionController|ActiveRecord)::[A-Za-z]+`),  // Rails
-	regexp.MustCompile(`\bat [\w$./-]+:\d+:\d+\)[\s\S]{0,80}?\bat `),      // Node/JS (two frames)
+	regexp.MustCompile(`(?i)Stack trace:\s*#0`),                                // PHP stack trace
+	regexp.MustCompile(`System\.[A-Za-z.]+Exception:`),                         // .NET
+	regexp.MustCompile(`(?i)Server Error in '.*' Application`),                 // ASP.NET YSOD
+	regexp.MustCompile(`(?i)Microsoft OLE DB Provider`),                        // classic ASP / SQL
+	regexp.MustCompile(`\bORA-\d{4,5}\b`),                                      // Oracle
+	regexp.MustCompile(`(?i)You have an error in your SQL syntax`),             // MySQL
+	regexp.MustCompile(`(?i)PostgreSQL.{0,40}(ERROR|query failed)`),            // Postgres
+	regexp.MustCompile(`(?i)Werkzeug Debugger`),                                // Flask debug
+	regexp.MustCompile(`(?i)Whoops, looks like something went wrong`),          // Laravel
+	regexp.MustCompile(`(?i)(ActionController|ActiveRecord)::[A-Za-z]+`),       // Rails
+	regexp.MustCompile(`\bat [\w$./-]+:\d+:\d+\)[\s\S]{0,80}?\bat `),           // Node/JS (two frames)
 }
 
 func checkErrorDisclosure(f *model.Flow) []Finding {
@@ -485,19 +489,19 @@ func checkCookies(f *model.Flow) []Finding {
 			out = append(out, Finding{Severity: Medium, Check: "cookie-no-secure",
 				Title: "Cookie without Secure flag", Evidence: sc,
 				Detail: fmt.Sprintf("Cookie %q is set over HTTPS without the Secure flag, so it can be sent over plain HTTP.", name),
-				Key: "cookie-no-secure|" + f.Host + "|" + name})
+				Key:    "cookie-no-secure|" + f.Host + "|" + name})
 		}
 		if !strings.Contains(low, "httponly") {
 			out = append(out, Finding{Severity: Low, Check: "cookie-no-httponly",
 				Title: "Cookie without HttpOnly flag", Evidence: sc,
 				Detail: fmt.Sprintf("Cookie %q lacks HttpOnly, so it is readable by JavaScript (document.cookie).", name),
-				Key: "cookie-no-httponly|" + f.Host + "|" + name})
+				Key:    "cookie-no-httponly|" + f.Host + "|" + name})
 		}
 		if !strings.Contains(low, "samesite") {
 			out = append(out, Finding{Severity: Low, Check: "cookie-no-samesite",
 				Title: "Cookie without SameSite attribute", Evidence: sc,
 				Detail: fmt.Sprintf("Cookie %q has no SameSite attribute, which can enable cross-site request forgery.", name),
-				Key: "cookie-no-samesite|" + f.Host + "|" + name})
+				Key:    "cookie-no-samesite|" + f.Host + "|" + name})
 		}
 	}
 	return out
@@ -525,13 +529,13 @@ func checkInfoDisclosure(f *model.Flow) []Finding {
 		out = append(out, Finding{Severity: Info, Check: "server-version",
 			Title: "Server version disclosure", Evidence: "Server: " + srv,
 			Detail: "The Server header reveals software and version information useful to an attacker.",
-			Key: "server-version|" + f.Host})
+			Key:    "server-version|" + f.Host})
 	}
 	if xp := f.RespHeaders.Get("X-Powered-By"); xp != "" {
 		out = append(out, Finding{Severity: Info, Check: "x-powered-by",
 			Title: "Technology disclosure (X-Powered-By)", Evidence: "X-Powered-By: " + xp,
 			Detail: "The X-Powered-By header discloses backend technology.",
-			Key: "x-powered-by|" + f.Host})
+			Key:    "x-powered-by|" + f.Host})
 	}
 	return out
 }

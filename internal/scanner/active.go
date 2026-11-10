@@ -5,8 +5,8 @@
 package scanner
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -517,10 +517,15 @@ func probe(ctx context.Context, t Target, req *request, pt point, rule Rule, pay
 	}
 
 	evidence := fmt.Sprintf("param %q (%s), payload: %s", pt.name, pt.in, injected)
+	respSnip := resp.Body
+	if len(respSnip) > 4000 {
+		respSnip = respSnip[:4000] + "\n…(truncated)"
+	}
 	mk := func(sev string) Finding {
 		return Finding{
 			Severity: sev, Check: rule.ID, Title: rule.Name, Detail: rule.Detail,
 			Evidence: evidence, Source: "active", Key: key,
+			ReqRaw: raw, RespRaw: respSnip,
 		}
 	}
 
