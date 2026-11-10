@@ -41,6 +41,14 @@
   nav button:hover{background:var(--elev);color:var(--fg)}
   nav button.active{background:var(--accent-dim);color:var(--accent)}
   nav button .ic{width:18px;display:inline-flex;justify-content:center;opacity:.85;font-size:13px}
+  #ptLog{font:12px/1.75 var(--mono);padding:10px 14px}
+  .ptline{white-space:pre-wrap;word-break:break-word;padding:1px 0}
+  .ptline.phase{color:var(--muted)} .ptline.phase b{color:var(--accent)}
+  .ptline.done{color:var(--green);font-weight:600;margin-top:8px}
+  .ptline.err{color:var(--red)}
+  .ptline .ptcrawl{color:var(--accent2);cursor:pointer}
+  .ptline .ptcrawl:hover{color:var(--accent);text-decoration:underline}
+  .ptline .ptst{color:var(--muted);margin-right:6px}
   nav button.active .ic{opacity:1}
   .side .sfoot{margin-top:auto;border-top:1px solid var(--line);padding:11px 14px;display:flex;flex-direction:column;gap:9px}
   .side .status{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:7px}
@@ -329,8 +337,16 @@
       <div id="ptHistory" style="margin-top:16px"></div>
     </div>
     <div style="flex:1;min-width:0;display:flex;flex-direction:column">
-      <div class="rlabel">Progress <span id="ptStatus" style="color:var(--muted)"></span></div>
-      <pre id="ptLog" class="rresp" style="flex:1;overflow:auto;margin:0;white-space:pre-wrap">Configure a target and click Run. Live progress appears here.</pre>
+      <div class="rlabel">Progress <span id="ptStatus" style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0"></span>
+        <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+          <span id="ptCrawlCount" class="badge" style="display:none"></span>
+          <button class="btn" id="ptOpenTarget" style="display:none;padding:4px 10px">Open in Target ↗</button>
+        </span>
+      </div>
+      <div id="ptNote" style="padding:9px 14px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--line);display:none;line-height:1.5">
+        Every crawled request is captured in <b style="color:var(--fg)">Proxy</b> &amp; <b style="color:var(--fg)">Target</b> with full request &amp; response — <b style="color:var(--fg)">click any crawled URL below</b> to open it, then use <b style="color:var(--fg)">⇥ Repeater</b>/<b style="color:var(--fg)">Fuzzer</b> for manual testing.
+      </div>
+      <div id="ptLog" class="rresp" style="flex:1;overflow:auto;margin:0">Configure a target and click Run. Live progress appears here.</div>
     </div>
   </div>
 </section>
@@ -1293,15 +1309,30 @@ $('#ptPdf').addEventListener('click', ()=>window.location='/report?format=pdf');
 $('#ptDocx').addEventListener('click', ()=>window.location='/report?format=docx');
 $('#ptXlsx').addEventListener('click', ()=>window.location='/report?format=xlsx');
 let ptController=null;
-function ptAppend(line){ const el=$('#ptLog'); const atBottom=el.scrollTop+el.clientHeight>=el.scrollHeight-20; el.textContent+='\n'+line; if(atBottom) el.scrollTop=el.scrollHeight; }
+let ptCrawled=0;
+function ptLine(html, cls){ const el=$('#ptLog'); const atBottom=el.scrollTop+el.clientHeight>=el.scrollHeight-24;
+  const d=document.createElement('div'); d.className='ptline'+(cls?' '+cls:''); d.innerHTML=html; el.appendChild(d);
+  if(atBottom) el.scrollTop=el.scrollHeight; return d; }
+function ptAppend(line){ ptLine(esc(line)); }
+// Open a captured flow (its request + response) in the Proxy inspector.
+function ptOpenFlow(id){ $('#nav-proxy').click(); try{ select(id); }catch(e){} }
 function ptEvent(ev){
-  if(ev.phase==='error'){ ptAppend('✗ '+ev.msg); return; }
-  if(ev.phase==='crawl' && ev.url){ ptAppend('  crawl: '+(ev.status||'')+' '+ev.url); return; }
-  if(ev.phase==='scan' && ev.scanned){ ptAppend('  scan: '+ev.scanned+'/'+ev.total+' '+(ev.host||'')+(ev.path||'')+' ('+ev.findings+' findings)'); return; }
-  if(ev.phase==='forms' && ev.submitted){ ptAppend('  form: '+ev.form+' ('+ev.findings+' findings)'); return; }
+  if(ev.phase==='error'){ ptLine('✗ '+esc(ev.msg),'err'); return; }
+  if(ev.phase==='crawl' && ev.url){
+    ptCrawled++;
+    const cc=$('#ptCrawlCount'); cc.style.display=''; cc.textContent=ptCrawled+' request'+(ptCrawled>1?'s':'')+' captured';
+    $('#ptNote').style.display=''; $('#ptOpenTarget').style.display='';
+    const d=ptLine('<span class="ptst">'+(ev.status||'…')+'</span><span class="ptcrawl">'+esc(ev.url)+'</span>');
+    if(ev.flowId){ const s=d.querySelector('.ptcrawl'); s.title='Open request & response'; s.addEventListener('click',()=>ptOpenFlow(ev.flowId)); }
+    else { const s=d.querySelector('.ptcrawl'); s.style.cursor='default'; s.style.color='var(--muted)'; }
+    return;
+  }
+  if(ev.phase==='scan' && ev.scanned){ ptLine('scan '+ev.scanned+'/'+ev.total+' '+esc((ev.host||'')+(ev.path||''))+' · '+ev.findings+' finding(s)','phase'); return; }
+  if(ev.phase==='forms' && ev.submitted){ ptLine('form '+esc(ev.form)+' · '+ev.findings+' finding(s)','phase'); return; }
   if(ev.phase==='evidence' && ev.shots!==undefined){ $('#ptStatus').textContent='capturing evidence '+ev.shots+'/'+ev.total; return; }
-  if(ev.msg){ ptAppend('▸ ['+ (ev.phase||'') +'] '+ev.msg); }
-  if(ev.done){ ptAppend('\n✔ '+ev.status+' — '+ev.pages+' pages, '+ev.endpoints+' endpoints, '+ev.findings+' findings'); }
+  if(ev.msg){ ptLine('<b>['+esc(ev.phase||'')+']</b> '+esc(ev.msg),'phase'); }
+  if(ev.done){ ptLine('✔ '+esc(ev.status)+' — '+ev.pages+' pages · '+ev.endpoints+' endpoints · '+ev.findings+' findings','done');
+    ptLine('↳ All '+ptCrawled+' crawled request(s) are in Proxy &amp; Target — open any to inspect or replay.','phase'); }
 }
 async function ptRun(){
   const target=$('#ptTarget').value.trim();
@@ -1310,7 +1341,9 @@ async function ptRun(){
     authMode:$('#ptAuth').value, loginUrl:$('#ptLoginUrl').value.trim(), username:$('#ptUser').value,
     password:$('#ptPass').value, userField:$('#ptUserField').value.trim(), passField:$('#ptPassField').value.trim(),
     successRegex:$('#ptSuccess').value.trim() };
-  $('#ptLog').textContent='Starting engagement…';
+  $('#ptLog').textContent=''; ptCrawled=0;
+  $('#ptCrawlCount').style.display='none'; $('#ptNote').style.display='none'; $('#ptOpenTarget').style.display='none';
+  ptLine('Starting engagement…','phase');
   $('#ptRun').style.display='none'; $('#ptStop').style.display=''; $('#ptStatus').textContent='running';
   ptController=new AbortController();
   try{
@@ -1325,6 +1358,7 @@ async function ptRun(){
   loadFindings(); ptLoadHistory();
 }
 $('#ptRun').addEventListener('click', ptRun);
+$('#ptOpenTarget').addEventListener('click', ()=>$('#nav-target').click());
 $('#ptStop').addEventListener('click', ()=>{ if(ptController) ptController.abort(); ptAppend('— stopped by user —'); });
 async function ptLoadHistory(){
   try{ const es=await (await fetch('/pentest/history')).json();

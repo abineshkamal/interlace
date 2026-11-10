@@ -2422,7 +2422,7 @@ func runEngagement(ctx context.Context, cfg engagementReq, st *store.Store, sc *
 	phase("crawl", fmt.Sprintf("crawling %s (up to %d pages)", cfg.Target, maxPages))
 	pages, _ := crawler.Crawl(ctx, crawler.Seed{URL: cfg.Target}, insecure, sc.InScope,
 		processFlow, func(pr crawler.Progress) {
-			emit(map[string]any{"phase": "crawl", "url": pr.URL, "status": pr.Status})
+			emit(map[string]any{"phase": "crawl", "url": pr.URL, "status": pr.Status, "flowId": pr.ID})
 		}, maxPages, sess)
 	phase("crawl", fmt.Sprintf("crawled %d page(s)", pages))
 

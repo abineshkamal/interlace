@@ -29,6 +29,7 @@ type Progress struct {
 	URL    string `json:"url"`
 	Status int    `json:"status"`
 	Found  int    `json:"found"`
+	ID     int64  `json:"id,omitempty"` // stored flow id, for linking to its request/response
 	Error  string `json:"error,omitempty"`
 }
 
@@ -107,7 +108,7 @@ func Crawl(ctx context.Context, seed Seed, insecure bool, inScope func(host stri
 				}
 			}
 		}
-		emit(Progress{URL: u.String(), Status: status, Found: found})
+		emit(Progress{URL: u.String(), Status: status, Found: found, ID: flow.ID})
 	}
 	return count, nil
 }
