@@ -1072,7 +1072,9 @@ function showFinding(id, node){
       <div class="vflow" style="display:flex;gap:8px;flex-wrap:wrap">
         ${f.flowId?`<button class="btn" id="viewFlow">View request #${f.flowId}</button>`:''}
         <button class="btn" id="retestBtn" title="Re-send the original request and check if it is still vulnerable">↻ Retest</button>
-        <button class="btn primary" id="aiTriageBtn">🤖 Analyze with AI</button>
+        <button class="btn primary" id="aiTriageBtn">🤖 Analyze</button>
+        <button class="btn" id="aiPocBtn" title="AI-generated proof of concept">🧪 PoC</button>
+        <button class="btn" id="aiFpBtn" title="AI false-positive check">⚖ FP check</button>
       </div>
       <div id="retestMsg" style="margin-top:8px;font:12px var(--mono);color:var(--muted)">${esc(f.retest||'')}</div>
       <div style="margin-top:14px">
@@ -1112,6 +1114,8 @@ function showFinding(id, node){
     rb.disabled=false; rb.textContent=prev;
   });
   $('#aiTriageBtn').addEventListener('click', ()=>aiTriage(f));
+  $('#aiPocBtn').addEventListener('click', ()=>aiPoc(f));
+  $('#aiFpBtn').addEventListener('click', ()=>aiFpCheck(f));
 }
 async function loadFindings(){
   try{ findings=await (await fetch('/findings')).json()||[]; }catch(e){ findings=[]; }
@@ -1288,6 +1292,30 @@ async function aiTriage(f){
     if(r.error){ if(/API key/.test(r.error)){ box.innerHTML='<span style="color:var(--amber)">Set an API key under the AI button first.</span>'; openAI(); }
       else box.innerHTML='<span style="color:var(--red)">'+esc(r.error)+'</span>'; return; }
     box.innerHTML='<div style="border:1px solid var(--accent);border-radius:8px;padding:12px;background:var(--bg2)">'+mdToHtml(r.analysis)+'</div>';
+  }catch(e){ if(box) box.innerHTML='<span style="color:var(--red)">request failed</span>'; }
+}
+function aiBox(html){ const box=$('#aiTriageBox'); if(box) box.innerHTML='<div style="border:1px solid var(--accent);border-radius:8px;padding:12px;background:var(--bg2)">'+html+'</div>'; }
+async function aiPoc(f){
+  const box=$('#aiTriageBox'); if(box) box.innerHTML='<span style="color:var(--muted)">Generating proof of concept…</span>';
+  try{ const r=await (await fetch('/ai/poc',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})).json();
+    if(r.error){ if(/API key|provider/.test(r.error)){ openAI(); } box.innerHTML='<span style="color:var(--amber)">'+esc(r.error)+'</span>'; return; }
+    aiBox('<div style="font-weight:600;margin-bottom:6px">🧪 Proof of concept</div>'+mdToHtml(r.poc));
+  }catch(e){ if(box) box.innerHTML='<span style="color:var(--red)">request failed</span>'; }
+}
+async function aiFpCheck(f){
+  const box=$('#aiTriageBox'); if(box) box.innerHTML='<span style="color:var(--muted)">Checking for false positive…</span>';
+  try{ const r=await (await fetch('/ai/fpcheck',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(f)})).json();
+    if(r.error){ if(/API key|provider/.test(r.error)){ openAI(); } box.innerHTML='<span style="color:var(--amber)">'+esc(r.error)+'</span>'; return; }
+    const col = r.verdict==='false-positive'?'var(--faint)':r.verdict==='true-positive'?'var(--red)':'var(--amber)';
+    let html='<div style="font-weight:600;margin-bottom:6px">⚖ Verdict: <span style="color:'+col+';text-transform:uppercase">'+esc(r.verdict)+'</span></div>'+mdToHtml(r.detail);
+    if(r.verdict==='false-positive') html+='<button class="btn" id="aiSetFp" style="margin-top:8px">Mark as false positive</button>';
+    aiBox(html);
+    const sb=$('#aiSetFp'); if(sb) sb.addEventListener('click', async ()=>{
+      await fetch('/finding/triage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:f.id,triage:'false-positive'})});
+      f.triage='false-positive'; sb.textContent='Marked ✓'; sb.disabled=true;
+      document.querySelectorAll('#triageBar .tg').forEach(x=>{ x.className='tg'+(x.dataset.tg==='false-positive'?' on t-false-positive':''); });
+      renderIssueList();
+    });
   }catch(e){ if(box) box.innerHTML='<span style="color:var(--red)">request failed</span>'; }
 }
 

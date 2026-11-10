@@ -604,6 +604,102 @@ Provide, in concise markdown (under 250 words):
 		writeJSON(w, map[string]string{"analysis": analysis})
 	})
 
+	// AI PoC generator: produce a ready-to-run proof of concept for a finding.
+	mux.HandleFunc("/ai/poc", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Title, Severity, Check, Detail, Evidence, Host, URL string
+			FlowID                                              int64 `json:"flowId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if !aiStore.Configured() {
+			writeJSON(w, map[string]string{"error": "configure an AI provider first (AI button)"})
+			return
+		}
+		reqText, respText := aiFindingContext(st, in.FlowID)
+		prompt := fmt.Sprintf(`You are a penetration tester writing a proof of concept for this confirmed-by-scanner finding.
+
+Finding: %s (severity: %s)
+Check: %s
+URL: %s
+Detail: %s
+Evidence: %s
+
+--- Captured request ---
+%s
+
+--- Captured response (truncated) ---
+%s
+
+Write a concise, SAFE proof of concept to CONFIRM this issue in an authorized test:
+1. A single ready-to-run curl command (fenced code block) that reproduces it, using the real URL above.
+2. Exactly what in the response confirms success.
+3. One sentence on how to escalate it in a real engagement.
+Keep it under 200 words. Do not include destructive payloads.`,
+			in.Title, in.Severity, in.Check, in.URL, in.Detail, in.Evidence, reqText, respText)
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		out, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, map[string]string{"poc": out})
+	})
+
+	// AI false-positive check: strict verdict the UI can act on.
+	mux.HandleFunc("/ai/fpcheck", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			Title, Severity, Check, Detail, Evidence, Host, URL string
+			FlowID                                              int64 `json:"flowId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if !aiStore.Configured() {
+			writeJSON(w, map[string]string{"error": "configure an AI provider first (AI button)"})
+			return
+		}
+		reqText, respText := aiFindingContext(st, in.FlowID)
+		prompt := fmt.Sprintf(`A scanner reported the finding below. Decide strictly whether it is a true or false positive using ONLY the evidence and captured response.
+
+Finding: %s (severity: %s)
+Check: %s
+URL: %s
+Detail: %s
+Evidence: %s
+
+--- Captured request ---
+%s
+
+--- Captured response (truncated) ---
+%s
+
+Reply with EXACTLY two lines:
+VERDICT: <true-positive|false-positive|uncertain>
+REASON: <one sentence>`,
+			in.Title, in.Severity, in.Check, in.URL, in.Detail, in.Evidence, reqText, respText)
+		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+		defer cancel()
+		out, err := aiStore.Triage(ctx, prompt)
+		if err != nil {
+			writeJSON(w, map[string]string{"error": err.Error()})
+			return
+		}
+		verdict := "uncertain"
+		low := strings.ToLower(out)
+		switch {
+		case strings.Contains(low, "false-positive") || strings.Contains(low, "false positive"):
+			verdict = "false-positive"
+		case strings.Contains(low, "true-positive") || strings.Contains(low, "true positive"):
+			verdict = "true-positive"
+		}
+		writeJSON(w, map[string]string{"verdict": verdict, "detail": out})
+	})
+
 	// Authorization testing (Autorize-style): configure a low-privilege identity.
 	mux.HandleFunc("/authz", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -2085,6 +2181,25 @@ func extractEvidenceToken(evidence string) string {
 		return e
 	}
 	return ""
+}
+
+// aiFindingContext returns the captured request + (truncated) response text for
+// a flow, for use in AI finding prompts.
+func aiFindingContext(st *store.Store, flowID int64) (reqText, respText string) {
+	if flowID == 0 {
+		return "", ""
+	}
+	f, _ := st.Get(flowID)
+	if f == nil {
+		return "", ""
+	}
+	decompressFlow(f)
+	reqText = flowToRaw(f)
+	respText = string(f.RespBody)
+	if len(respText) > 2000 {
+		respText = respText[:2000] + "\n…(truncated)"
+	}
+	return reqText, respText
 }
 
 // buildSARIF renders findings as a SARIF 2.1.0 log for CI / code-scanning.
