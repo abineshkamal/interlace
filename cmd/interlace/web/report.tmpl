@@ -70,7 +70,7 @@
     <h3><span class="pill {{.Severity}}">{{.Severity}}</span> {{.Title}} <span class="cvss cvss-{{.CVSSRating}}">CVSS {{.CVSS}}</span></h3>
     <div class="row"><span class="k">Affected URL</span> <span class="v">{{if .URL}}{{.URL}}{{else}}{{.Host}}{{end}}</span></div>
     <div class="meta">check: {{.Check}} &nbsp;·&nbsp; source: {{.Source}}</div>
-    <div class="row"><span class="k">Description</span> <span class="v">{{.Detail}}</span></div>
+    <div class="row"><span class="k">Observation</span> <span class="v">{{.Observation}}</span></div>
     {{if .Evidence}}<div class="evid">{{.Evidence}}</div>{{end}}
     {{if .Impact}}<div class="row"><span class="k">Impact</span> <span class="v">{{.Impact}}</span></div>{{end}}
     {{if .Remediation}}<div class="row"><span class="k" style="color:#166534">Recommendation</span> <span class="v">{{.Remediation}}</span></div>{{end}}

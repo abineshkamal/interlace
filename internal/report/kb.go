@@ -9,6 +9,7 @@ import (
 // business, how to fix it, standard references (CWE / OWASP Top 10), and a
 // representative CVSS v3.1 base score for the weakness class.
 type Meta struct {
+	Observation string // narrative clause following "It was observed that the application [at URL] …"
 	Impact      string
 	Remediation string
 	CWE         string  // e.g. "CWE-79"
@@ -16,6 +17,26 @@ type Meta struct {
 	OWASP       string  // e.g. "A03:2021 – Injection"
 	CVSS        float64 // CVSS v3.1 base score (0 = informational / not scored)
 	CVSSVector  string  // CVSS v3.1 base vector (without the "CVSS:3.1/" prefix)
+}
+
+// ObservationText composes a professional observation sentence for a report,
+// weaving in the affected URL and the scanner's specific detail.
+func (m Meta) ObservationText(url, detail string) string {
+	lead := "It was observed that the application"
+	if url != "" {
+		lead += " at " + url
+	}
+	if m.Observation != "" {
+		s := lead + " " + m.Observation
+		if detail != "" && !strings.Contains(m.Observation, strings.TrimSuffix(detail, ".")) {
+			s += " " + strings.TrimSpace(detail)
+		}
+		return s
+	}
+	if detail != "" {
+		return lead + " is affected by this issue: " + strings.TrimSpace(detail)
+	}
+	return lead + " is affected by " + "this issue."
 }
 
 // CVSSRating maps the base score to its qualitative severity band.
@@ -116,29 +137,34 @@ func MetaFor(check string) Meta {
 var kb = map[string]Meta{
 	// ---- Injection (active) ----
 	"reflected-xss": {
+		Observation: "accepts user-supplied input in the affected parameter and reflects it into the HTTP response without adequate input validation or output encoding. A crafted script payload was returned unencoded and executed in the browser, confirming a Reflected Cross-Site Scripting (XSS) vulnerability.",
 		Impact:      "An attacker can run arbitrary JavaScript in victims' browsers, leading to session/cookie theft, account takeover, credential harvesting, and defacement.",
-		Remediation: "Context-encode all output, validate input, and apply a strict Content-Security-Policy. Prefer framework auto-escaping.",
+		Remediation: "It is recommended to validate all user input against a strict allow-list and to apply context-aware output encoding to every piece of user-controllable data rendered in a response (HTML, attribute, JavaScript and URL contexts). In addition, deploy a strong Content-Security-Policy header with restrictive directives (for example, default-src 'self'; script-src 'self'; object-src 'none') to limit script execution, and set the HttpOnly, Secure and SameSite attributes on session cookies to reduce the impact of any residual cross-site scripting.",
 		CWE:         "CWE-79", CWEName: "Cross-site Scripting", OWASP: "A03:2021 – Injection",
 	},
 	"sqli-error":   sqli, "sqli-time": sqli, "sqli-boolean": sqli,
 	"ssti": {
+		Observation: "evaluates user-supplied input within a server-side template engine. A template expression injected in the affected parameter was evaluated by the server, confirming a Server-Side Template Injection vulnerability that commonly leads to remote code execution.",
 		Impact:      "Server-side template injection commonly escalates to remote code execution on the application server, exposing data and the host.",
-		Remediation: "Never pass user input into template engines. Use logic-less templates or a sandbox, and pass data as bound variables.",
+		Remediation: "It is recommended to never pass user-supplied input into template engines as part of the template itself. User data should be provided strictly as bound variables to a pre-defined template. Where dynamic templates are unavoidable, use a sandboxed, logic-less templating engine and apply strict input validation.",
 		CWE:         "CWE-1336", CWEName: "Server-Side Template Injection", OWASP: "A03:2021 – Injection",
 	},
 	"path-traversal": {
+		Observation: "uses user-supplied input to construct a file path without adequate canonicalisation or validation. Directory-traversal sequences supplied in the affected parameter allowed access to files outside the intended directory, confirming a Path Traversal vulnerability.",
 		Impact:      "An attacker can read files outside the intended directory — source code, configuration and secrets — and sometimes write/overwrite files.",
-		Remediation: "Canonicalize and validate paths against an allowlist; never build file paths from user input. Use safe file APIs.",
+		Remediation: "It is recommended to avoid building file paths directly from user input. Where a file must be selected by the user, map the input to a fixed allow-list of permitted files, canonicalise the resolved path and verify it remains within the intended base directory before access. Run the application with least-privilege file-system permissions.",
 		CWE:         "CWE-22", CWEName: "Path Traversal", OWASP: "A01:2021 – Broken Access Control",
 	},
 	"cmdi": {
+		Observation: "passes user-supplied input to an operating-system command without adequate sanitisation. Command-separator metacharacters injected in the affected parameter were executed by the server, confirming an OS Command Injection vulnerability.",
 		Impact:      "OS command injection gives the attacker arbitrary command execution on the server, typically resulting in full host compromise.",
-		Remediation: "Avoid shelling out with user input. Use native APIs, pass arguments as a list (no shell), and apply strict allowlists.",
+		Remediation: "It is recommended to avoid invoking operating-system commands with user-supplied input. Where a system call is unavoidable, use native language APIs instead of a shell, pass arguments as a parameter array (never a concatenated command string), and validate input against a strict allow-list. Run the process with least privilege.",
 		CWE:         "CWE-78", CWEName: "OS Command Injection", OWASP: "A03:2021 – Injection",
 	},
 	"open-redirect": {
+		Observation: "uses a user-controllable parameter as the target of an HTTP redirect without validating it against trusted destinations, allowing the application to redirect users to an arbitrary external site.",
 		Impact:      "A trusted domain can be used to redirect users to attacker sites for phishing and credential theft, and to bypass redirect-based protections.",
-		Remediation: "Validate redirect targets against an allowlist of internal paths; do not redirect to user-controlled absolute URLs.",
+		Remediation: "It is recommended to validate redirect targets against an allow-list of permitted internal paths, or to use indirect references (a mapping of identifiers to URLs) rather than accepting a user-supplied absolute URL. Where external redirects are required, display an interstitial warning page.",
 		CWE:         "CWE-601", CWEName: "Open Redirect", OWASP: "A01:2021 – Broken Access Control",
 	},
 	"ssrf": ssrf, "blind-ssrf": ssrf,
@@ -173,8 +199,9 @@ var kb = map[string]Meta{
 		CWE:         "CWE-502", CWEName: "Deserialization of Untrusted Data", OWASP: "A08:2021 – Software and Data Integrity Failures",
 	},
 	"mass-assignment": {
+		Observation: "binds request parameters directly to internal object properties, and accepted additional attacker-supplied fields that were not part of the intended request. This confirms a mass-assignment (auto-binding) weakness that can be used to set privileged attributes.",
 		Impact:      "Binding attacker-supplied fields the server did not intend (e.g. role, isAdmin, balance) can escalate privileges or tamper with records.",
-		Remediation: "Bind only an explicit allowlist of fields per endpoint; never bind the full request object to the model.",
+		Remediation: "It is recommended to bind only an explicit allow-list of permitted fields per endpoint (for example, using data-transfer objects or a 'fillable' allow-list), and to never bind the full request body directly to the data model. Sensitive attributes such as role, permissions and identifiers should only be settable by trusted server-side logic.",
 		CWE:         "CWE-915", CWEName: "Improperly Controlled Modification of Object Attributes (Mass Assignment)", OWASP: "A08:2021 – Software and Data Integrity Failures",
 	},
 	"http-request-smuggling": {
@@ -228,13 +255,15 @@ var kb = map[string]Meta{
 	},
 	// ---- Transport / headers ----
 	"missing-hsts": {
+		Observation: "does not return a Strict-Transport-Security response header over HTTPS, so browsers are not instructed to enforce HTTPS for subsequent requests.",
 		Impact:      "Without HSTS, users can be downgraded to HTTP and have traffic intercepted or modified (man-in-the-middle).",
-		Remediation: "Add Strict-Transport-Security with a long max-age and includeSubDomains (consider preload).",
+		Remediation: "It is recommended to add the Strict-Transport-Security header with a long max-age (for example, 31536000 seconds) and the includeSubDomains directive, and to consider HSTS preloading once the policy has been validated across all subdomains.",
 		CWE:         "CWE-319", CWEName: "Cleartext Transmission of Sensitive Information", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"missing-csp": {
+		Observation: "does not return a Content-Security-Policy response header, so the browser is not provided with a policy restricting the sources from which scripts, styles and other content may be loaded.",
 		Impact:      "Absent CSP removes a key defence-in-depth control against cross-site scripting and data injection.",
-		Remediation: "Define a Content-Security-Policy restricting script/style/frame sources; avoid unsafe-inline.",
+		Remediation: "It is recommended to implement a strong Content-Security-Policy header with restrictive directives — for example, default-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none' — avoiding 'unsafe-inline' and 'unsafe-eval'. Roll the policy out in report-only mode first to tune it before enforcing.",
 		CWE:         "CWE-693", CWEName: "Protection Mechanism Failure", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"missing-xfo": {
@@ -253,28 +282,33 @@ var kb = map[string]Meta{
 		CWE:         "CWE-200", CWEName: "Exposure of Sensitive Information", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"cookie-no-secure": {
+		Observation: "sets a session cookie without the Secure attribute, so the cookie may be transmitted over an unencrypted HTTP connection.",
 		Impact:      "A session cookie without Secure can be transmitted over HTTP and captured by a network attacker.",
-		Remediation: "Set the Secure attribute on all session/auth cookies.",
+		Remediation: "It is recommended to set the Secure attribute on all session and authentication cookies so that they are only ever sent over HTTPS, and to enforce HTTPS site-wide together with HSTS.",
 		CWE:         "CWE-614", CWEName: "Sensitive Cookie Without 'Secure' Attribute", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"cookie-no-httponly": {
+		Observation: "sets a session cookie without the HttpOnly attribute, making the cookie accessible to client-side JavaScript.",
 		Impact:      "A cookie without HttpOnly is readable by JavaScript, so an XSS flaw can steal the session.",
-		Remediation: "Set the HttpOnly attribute on session/auth cookies.",
+		Remediation: "It is recommended to set the HttpOnly attribute on all session and authentication cookies so that they cannot be read by JavaScript, limiting the impact of any cross-site scripting flaw.",
 		CWE:         "CWE-1004", CWEName: "Sensitive Cookie Without 'HttpOnly' Flag", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"cookie-no-samesite": {
+		Observation: "sets a session cookie without an appropriate SameSite attribute, so the cookie is sent on cross-site requests.",
 		Impact:      "A cookie without SameSite is sent on cross-site requests, enabling cross-site request forgery.",
-		Remediation: "Set SameSite=Lax or Strict on session/auth cookies.",
+		Remediation: "It is recommended to set the SameSite attribute (Lax or Strict) on session and authentication cookies to prevent them from being sent on cross-site requests, and to implement anti-CSRF tokens on state-changing operations.",
 		CWE:         "CWE-1275", CWEName: "Sensitive Cookie with Improper SameSite Attribute", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"error-disclosure": {
+		Observation: "returns verbose error output — a stack trace, debug page or raw database error — directly to the client, disclosing internal file paths, library versions and application logic.",
 		Impact:      "Verbose errors and stack traces reveal internal file paths, library versions, SQL and application logic that help an attacker craft targeted attacks.",
-		Remediation: "Return generic error pages to users; log full details server-side only; disable debug mode in production.",
+		Remediation: "It is recommended to return a generic error page to end users while logging the full error details server-side only, and to disable debug/development mode in production environments.",
 		CWE:         "CWE-209", CWEName: "Generation of Error Message Containing Sensitive Information", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"directory-listing": {
+		Observation: "returns an automatic directory listing for a requested path, exposing the names of files and folders that should not be enumerable.",
 		Impact:      "An automatic directory listing exposes file and folder names — backups, source and configuration files — that should not be enumerable.",
-		Remediation: "Disable directory listing / autoindex on the web server and remove sensitive files from web roots.",
+		Remediation: "It is recommended to disable automatic directory listing (autoindex) on the web server, ensure a default document is present in each directory, and remove backup, source and configuration files from web-accessible locations.",
 		CWE:         "CWE-548", CWEName: "Exposure of Information Through Directory Listing", OWASP: "A05:2021 – Security Misconfiguration",
 	},
 	"password-over-http": {
@@ -308,23 +342,27 @@ var kb = map[string]Meta{
 // Shared entries for check families.
 var (
 	sqli = Meta{
+		Observation: "incorporates user-supplied input directly into back-end SQL queries without proper parameterisation. Specially crafted input supplied in the affected parameter altered the intended query logic, confirming a SQL Injection vulnerability.",
 		Impact:      "SQL injection can read, modify or delete any data in the database, bypass authentication, and in some configurations execute commands on the database host.",
-		Remediation: "Use parameterized queries / prepared statements for every query; never concatenate user input into SQL.",
+		Remediation: "It is recommended to use parameterised queries (prepared statements) for every database interaction so that user input is always treated as data and never as query structure. Where an ORM or stored procedures are used, ensure they are not concatenating input internally. Additionally, apply strict server-side input validation, enforce least-privilege database accounts, and return generic error messages so that database errors are not disclosed to the client.",
 		CWE:         "CWE-89", CWEName: "SQL Injection", OWASP: "A03:2021 – Injection",
 	}
 	ssrf = Meta{
+		Observation: "makes server-side requests to a destination derived from user-controllable input without adequate validation, allowing the request to be redirected to arbitrary hosts. This confirms a Server-Side Request Forgery (SSRF) vulnerability.",
 		Impact:      "Server-side request forgery lets an attacker reach internal services and cloud metadata endpoints, often disclosing credentials and enabling further compromise.",
-		Remediation: "Validate and allowlist outbound destinations; block internal ranges, link-local metadata IPs and file:// — do not follow attacker-controlled URLs.",
+		Remediation: "It is recommended to validate and allow-list the permitted outbound destinations (scheme, host and port) rather than accepting arbitrary user-supplied URLs. Explicitly block requests to internal/private IP ranges, link-local cloud-metadata addresses (169.254.169.254) and non-HTTP schemes such as file://. Disable unnecessary URL redirection following, and segment the application network so that back-end services are not reachable from the application tier.",
 		CWE:         "CWE-918", CWEName: "Server-Side Request Forgery (SSRF)", OWASP: "A10:2021 – Server-Side Request Forgery",
 	}
 	cors = Meta{
+		Observation: "returns a permissive Cross-Origin Resource Sharing (CORS) policy that reflects or wildcards the requesting origin, allowing untrusted web origins to read authenticated responses from this application.",
 		Impact:      "A permissive cross-origin policy can let untrusted sites read responses from this origin, exposing user or application data.",
-		Remediation: "Restrict Access-Control-Allow-Origin to a trusted allowlist; never reflect arbitrary or null origins.",
+		Remediation: "It is recommended to restrict the Access-Control-Allow-Origin header to a maintained allow-list of trusted origins and to never reflect an arbitrary or 'null' origin. Do not combine a wildcard or reflected origin with Access-Control-Allow-Credentials. Return CORS headers only on endpoints that genuinely require cross-origin access.",
 		CWE:         "CWE-942", CWEName: "Permissive Cross-domain Policy with Untrusted Domains", OWASP: "A05:2021 – Security Misconfiguration",
 	}
 	infoLeak = Meta{
+		Observation: "discloses its underlying software and version information through response headers, assisting an attacker in fingerprinting the technology stack.",
 		Impact:      "Technology/version disclosure helps an attacker fingerprint the stack and target known vulnerabilities.",
-		Remediation: "Remove or obfuscate version/technology headers (Server, X-Powered-By, etc.).",
+		Remediation: "It is recommended to remove or obfuscate version and technology headers (such as Server and X-Powered-By) at the web server or application tier, so that software versions are not exposed to clients.",
 		CWE:         "CWE-200", CWEName: "Exposure of Sensitive Information", OWASP: "A05:2021 – Security Misconfiguration",
 	}
 )

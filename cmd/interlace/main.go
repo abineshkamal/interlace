@@ -1977,6 +1977,7 @@ REASON: <one sentence>`,
 			scanner.Finding
 			CVSS        string
 			CVSSRating  string
+			Observation string
 			Impact      string
 			Remediation string
 			Reference   string
@@ -1993,7 +1994,11 @@ REASON: <one sentence>`,
 				order = append(order, f.Host)
 			}
 			m := report.MetaFor(f.Check)
-			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.CVSSText(), m.CVSSRating(), m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
+			urlOrHost := f.URL
+			if urlOrHost == "" {
+				urlOrHost = f.Host
+			}
+			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.CVSSText(), m.CVSSRating(), m.ObservationText(urlOrHost, f.Detail), m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
 		}
 		var groups []hostGroup
 		for _, h := range order {

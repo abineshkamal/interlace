@@ -123,7 +123,7 @@ func (r Report) PDF() ([]byte, error) {
 		pdf.SetFont("Helvetica", "", 10)
 		section(pdf, "CVSS v3.1", m.CVSSText())
 		section(pdf, "Affected URL", nz(f.URL, f.Host))
-		section(pdf, "Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
+		section(pdf, "Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail))
 		if f.Evidence != "" {
 			pdf.SetFont("Helvetica", "B", 10)
 			pdf.Cell(0, 5, "Evidence")
@@ -264,7 +264,7 @@ func (r Report) XLSX() ([]byte, error) {
 	// Findings sheet.
 	const sheet = "Findings"
 	f.NewSheet(sheet)
-	headers := []string{"#", "Severity", "CVSS", "CVSS Vector", "Title", "Affected URL", "Description", "Impact", "Recommendation", "CWE", "References", "Evidence", "Analyst note"}
+	headers := []string{"#", "Severity", "CVSS", "CVSS Vector", "Title", "Affected URL", "Observation", "Impact", "Recommendation", "CWE", "References", "Evidence", "Analyst note"}
 	for i, h := range headers {
 		col := string(rune('A' + i))
 		f.SetCellValue(sheet, col+"1", h)
@@ -278,7 +278,7 @@ func (r Report) XLSX() ([]byte, error) {
 			cvss = fmt.Sprintf("%.1f (%s)", m.CVSS, m.CVSSRating())
 			vector = "CVSS:3.1/" + m.CVSSVector
 		}
-		vals := []any{i + 1, fn.Severity, cvss, vector, fn.Title, nz(fn.URL, fn.Host), nz(fn.Detail, fn.Title),
+		vals := []any{i + 1, fn.Severity, cvss, vector, fn.Title, nz(fn.URL, fn.Host), m.ObservationText(nz(fn.URL, fn.Host), fn.Detail),
 			m.Impact, m.Remediation, m.CWE, m.Reference(), fn.Evidence, fn.Note}
 		for ci, v := range vals {
 			col := string(rune('A' + ci))
@@ -351,7 +351,7 @@ func (r Report) DOCX() ([]byte, error) {
 		para(fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), "", true, 14)
 		labeled("CVSS v3.1", m.CVSSText())
 		labeled("Affected URL", nz(f.URL, f.Host))
-		labeled("Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
+		labeled("Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail))
 		if f.Evidence != "" {
 			labeled("Evidence", f.Evidence)
 		}

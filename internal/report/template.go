@@ -139,7 +139,7 @@ func (r Report) docxFindingsXML() string {
 		para(fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), true, 14)
 		labeled("CVSS v3.1", m.CVSSText())
 		labeled("Affected URL", nz(f.URL, f.Host))
-		labeled("Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
+		labeled("Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail))
 		if f.Evidence != "" {
 			labeled("Evidence", f.Evidence)
 		}
