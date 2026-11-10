@@ -76,59 +76,76 @@ func (r Report) PDF() ([]byte, error) {
 	pdf.Cell(0, 7, "Generated: "+r.Generated.Format("2006-01-02 15:04 MST"))
 	pdf.Ln(12)
 
-	// Summary.
+	// Executive summary.
 	c := r.counts()
-	pdf.SetFont("Helvetica", "B", 13)
-	pdf.Cell(0, 8, "Summary")
-	pdf.Ln(9)
+	total := len(r.Findings)
+	pdf.SetFont("Helvetica", "B", 15)
+	pdf.Cell(0, 8, "Executive Summary")
+	pdf.Ln(10)
 	pdf.SetFont("Helvetica", "", 11)
+	pdf.MultiCell(0, 6, r.summaryNarrative(), "", "L", false)
+	pdf.Ln(3)
+
+	// Severity breakdown table.
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetFillColor(238, 240, 247)
+	pdf.CellFormat(70, 8, "Severity", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(30, 8, "Count", "1", 1, "C", true, 0, "")
+	pdf.SetFont("Helvetica", "", 10)
 	for _, s := range []string{"high", "medium", "low", "info"} {
 		rr, gg, bb := sevRGB(s)
 		pdf.SetTextColor(rr, gg, bb)
-		pdf.Cell(0, 7, fmt.Sprintf("%s: %d", strings.ToUpper(s), c[s]))
-		pdf.Ln(7)
+		pdf.CellFormat(70, 7, strings.ToUpper(s), "1", 0, "L", false, 0, "")
+		pdf.CellFormat(30, 7, fmt.Sprintf("%d", c[s]), "1", 1, "C", false, 0, "")
 	}
 	pdf.SetTextColor(0, 0, 0)
-	pdf.Ln(4)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.CellFormat(70, 7, "TOTAL", "1", 0, "L", false, 0, "")
+	pdf.CellFormat(30, 7, fmt.Sprintf("%d", total), "1", 1, "C", false, 0, "")
 
-	// Findings.
+	// Detailed findings.
+	pdf.AddPage()
+	pdf.SetFont("Helvetica", "B", 15)
+	pdf.Cell(0, 8, "Detailed Findings")
+	pdf.Ln(11)
 	for i, f := range r.sorted() {
+		m := MetaFor(f.Check)
 		pdf.SetFont("Helvetica", "B", 13)
 		rr, gg, bb := sevRGB(f.Severity)
 		pdf.SetTextColor(rr, gg, bb)
 		pdf.MultiCell(0, 7, fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), "", "L", false)
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Helvetica", "", 10)
-		kv(pdf, "Host", f.Host)
-		kv(pdf, "URL", f.URL)
-		kv(pdf, "Check", f.Check)
-		if f.Detail != "" {
-			pdf.Ln(1)
-			pdf.MultiCell(0, 5, f.Detail, "", "L", false)
-		}
+		section(pdf, "Affected URL", nz(f.URL, f.Host))
+		section(pdf, "Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
 		if f.Evidence != "" {
+			pdf.SetFont("Helvetica", "B", 10)
+			pdf.Cell(0, 5, "Evidence")
+			pdf.Ln(5)
 			pdf.SetFont("Courier", "", 9)
-			pdf.MultiCell(0, 5, "Evidence: "+f.Evidence, "", "L", false)
+			pdf.MultiCell(0, 5, f.Evidence, "", "L", false)
 			pdf.SetFont("Helvetica", "", 10)
 		}
+		section(pdf, "Impact", m.Impact)
+		section(pdf, "Recommendation", m.Remediation)
+		if ref := m.Reference(); ref != "" {
+			section(pdf, "References", ref)
+		}
 		if f.Note != "" {
-			pdf.MultiCell(0, 5, "Analyst note: "+f.Note, "", "L", false)
+			section(pdf, "Analyst note", f.Note)
 		}
 		if len(f.Screenshot) > 0 {
 			name := fmt.Sprintf("shot%d", i)
 			opt := fpdf.ImageOptions{ImageType: "PNG", ReadDpi: false}
-			if pdf.RegisterImageOptionsReader(name, opt, bytes.NewReader(f.Screenshot)) != nil {
-				// skip a bad image silently
-			} else {
+			if pdf.RegisterImageOptionsReader(name, opt, bytes.NewReader(f.Screenshot)) == nil {
 				pdf.Ln(2)
-				// fit within the content width (180mm)
 				pdf.ImageOptions(name, 15, pdf.GetY(), 150, 0, true, opt, 0, "")
 			}
 		}
 		pdf.Ln(6)
 		pdf.SetDrawColor(220, 220, 220)
 		pdf.Line(15, pdf.GetY(), 195, pdf.GetY())
-		pdf.Ln(4)
+		pdf.Ln(5)
 	}
 
 	var buf bytes.Buffer
@@ -146,6 +163,54 @@ func kv(pdf *fpdf.Fpdf, k, v string) {
 	pdf.Cell(22, 5, k+":")
 	pdf.SetFont("Helvetica", "", 10)
 	pdf.MultiCell(0, 5, v, "", "L", false)
+}
+
+// section prints a bold label on its own line followed by a wrapped value.
+func section(pdf *fpdf.Fpdf, label, value string) {
+	if value == "" {
+		return
+	}
+	pdf.Ln(1)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.Cell(0, 5, label)
+	pdf.Ln(5)
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.MultiCell(0, 5, value, "", "L", false)
+}
+
+func nz(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+// summaryNarrative is a one-paragraph overview of the assessment result.
+func (r Report) summaryNarrative() string {
+	return SummaryText(r.Target, r.counts(), len(r.Findings))
+}
+
+// SummaryText renders the executive-summary paragraph from severity counts.
+// Exported so the HTML report (in the main package) shares the same wording.
+func SummaryText(target string, counts map[string]int, total int) string {
+	if total == 0 {
+		return "This automated assessment did not identify any issues in the scanned scope. " +
+			"Note that automated scanning does not replace manual testing of business logic and access control."
+	}
+	parts := []string{}
+	for _, s := range []string{"high", "medium", "low", "info"} {
+		if counts[s] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[s], s))
+		}
+	}
+	lead := "no high-severity issues were found"
+	if counts["high"] > 0 {
+		lead = fmt.Sprintf("%d high-severity issue(s) require prompt attention", counts["high"])
+	}
+	return fmt.Sprintf("This assessment of %s identified %d issue(s) (%s). Overall, %s. "+
+		"Findings are listed below in order of severity, each with its affected URL, a description, "+
+		"the business impact, a recommended remediation and references (CWE / OWASP Top 10).",
+		nz(target, "the target"), total, strings.Join(parts, ", "), lead)
 }
 
 func sevRGB(s string) (int, int, int) {
@@ -184,26 +249,31 @@ func (r Report) XLSX() ([]byte, error) {
 		f.SetCellValue("Summary", cell("B", row), c[s])
 		row++
 	}
+	f.SetCellValue("Summary", cell("A", row), "TOTAL")
+	f.SetCellValue("Summary", cell("B", row), len(r.Findings))
 
 	// Findings sheet.
 	const sheet = "Findings"
 	f.NewSheet(sheet)
-	headers := []string{"#", "Severity", "Title", "Host", "URL", "Check", "Evidence", "Note"}
+	headers := []string{"#", "Severity", "Title", "Affected URL", "Description", "Impact", "Recommendation", "CWE", "References", "Evidence", "Analyst note"}
 	for i, h := range headers {
 		col := string(rune('A' + i))
 		f.SetCellValue(sheet, col+"1", h)
 	}
 	for i, fn := range r.sorted() {
 		rw := i + 2
-		vals := []any{i + 1, fn.Severity, fn.Title, fn.Host, fn.URL, fn.Check, fn.Evidence, fn.Note}
+		m := MetaFor(fn.Check)
+		vals := []any{i + 1, fn.Severity, fn.Title, nz(fn.URL, fn.Host), nz(fn.Detail, fn.Title),
+			m.Impact, m.Remediation, m.CWE, m.Reference(), fn.Evidence, fn.Note}
 		for ci, v := range vals {
 			col := string(rune('A' + ci))
 			f.SetCellValue(sheet, cell(col, rw), v)
 		}
 	}
-	f.SetColWidth(sheet, "C", "C", 40)
-	f.SetColWidth(sheet, "E", "E", 40)
-	f.SetColWidth(sheet, "G", "G", 50)
+	widths := map[string]float64{"C": 34, "D": 44, "E": 50, "F": 50, "G": 50, "I": 40, "J": 40}
+	for col, wdt := range widths {
+		f.SetColWidth(sheet, col, col, wdt)
+	}
 
 	buf, err := f.WriteToBuffer()
 	if err != nil {
@@ -236,29 +306,43 @@ func (r Report) DOCX() ([]byte, error) {
 		body.WriteString(`</w:rPr><w:t xml:space="preserve">` + xmlEsc(text) + `</w:t></w:r></w:p>`)
 	}
 
+	// labeled writes "Label: value" with the label bold and the value normal.
+	labeled := func(label, value string) {
+		if value == "" {
+			return
+		}
+		body.WriteString(`<w:p><w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">` + xmlEsc(label+": ") + `</w:t></w:r>`)
+		body.WriteString(`<w:r><w:t xml:space="preserve">` + xmlEsc(value) + `</w:t></w:r></w:p>`)
+	}
+
 	para("Interlace Security Assessment", "", true, 20)
 	para("Target: "+r.Target, "", false, 11)
 	para("Generated: "+r.Generated.Format("2006-01-02 15:04 MST"), "", false, 11)
-	c := r.counts()
-	para(fmt.Sprintf("Summary — High: %d   Medium: %d   Low: %d   Info: %d",
-		c["high"], c["medium"], c["low"], c["info"]), "", true, 12)
 	para("", "", false, 0)
 
+	c := r.counts()
+	para("Executive Summary", "", true, 15)
+	para(r.summaryNarrative(), "", false, 11)
+	para(fmt.Sprintf("High: %d    Medium: %d    Low: %d    Info: %d    Total: %d",
+		c["high"], c["medium"], c["low"], c["info"], len(r.Findings)), "", true, 11)
+	para("", "", false, 0)
+
+	para("Detailed Findings", "", true, 15)
 	for i, f := range r.sorted() {
+		m := MetaFor(f.Check)
 		para(fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), "", true, 14)
-		para("Host: "+f.Host, "", false, 11)
-		if f.URL != "" {
-			para("URL: "+f.URL, "", false, 11)
-		}
-		para("Check: "+f.Check, "", false, 11)
-		if f.Detail != "" {
-			para(f.Detail, "", false, 11)
-		}
+		labeled("Affected URL", nz(f.URL, f.Host))
+		labeled("Description", nz(f.Detail, "An instance of "+f.Title+" was identified."))
 		if f.Evidence != "" {
-			para("Evidence: "+f.Evidence, "", false, 10)
+			labeled("Evidence", f.Evidence)
+		}
+		labeled("Impact", m.Impact)
+		labeled("Recommendation", m.Remediation)
+		if ref := m.Reference(); ref != "" {
+			labeled("References", ref)
 		}
 		if f.Note != "" {
-			para("Analyst note: "+f.Note, "", false, 10)
+			labeled("Analyst note", f.Note)
 		}
 		if len(f.Screenshot) > 0 {
 			para("[screenshot captured — see PDF/HTML report]", "", false, 10)

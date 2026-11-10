@@ -1710,10 +1710,13 @@ Provide, in concise markdown (under 250 words):
 			return
 		}
 
-		// Group findings by host and attach remediation guidance.
+		// Group findings by host and attach remediation knowledge.
 		type repFinding struct {
 			scanner.Finding
+			Impact      string
 			Remediation string
+			Reference   string
+			CWEURL      string
 		}
 		type hostGroup struct {
 			Host     string
@@ -1725,7 +1728,8 @@ Provide, in concise markdown (under 250 words):
 			if _, ok := byHost[f.Host]; !ok {
 				order = append(order, f.Host)
 			}
-			byHost[f.Host] = append(byHost[f.Host], repFinding{f, remediationFor(f.Check)})
+			m := report.MetaFor(f.Check)
+			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
 		}
 		var groups []hostGroup
 		for _, h := range order {
@@ -1736,9 +1740,11 @@ Provide, in concise markdown (under 250 words):
 			Generated string
 			Flows     int64
 			Counts    map[string]int
+			Summary   string
 			Findings  []scanner.Finding
 			Groups    []hostGroup
-		}{time.Now().Format("2006-01-02 15:04 MST"), flows, counts, findings, groups}
+		}{time.Now().Format("2006-01-02 15:04 MST"), flows, counts,
+			report.SummaryText("", counts, len(findings)), findings, groups}
 
 		if r.URL.Query().Get("dl") != "" {
 			w.Header().Set("Content-Disposition", `attachment; filename="interlace-report.html"`)
@@ -1976,73 +1982,6 @@ func parseJSONStringArray(s string) []string {
 }
 
 // remediationFor returns short remediation guidance for a check.
-func remediationFor(check string) string {
-	switch check {
-	case "missing-hsts":
-		return "Add Strict-Transport-Security with a long max-age and includeSubDomains."
-	case "missing-csp":
-		return "Define a Content-Security-Policy restricting script/style/frame sources."
-	case "missing-xfo":
-		return "Set X-Frame-Options: DENY or a CSP frame-ancestors directive."
-	case "missing-nosniff":
-		return "Add X-Content-Type-Options: nosniff."
-	case "missing-referrer-policy":
-		return "Set Referrer-Policy (e.g. strict-origin-when-cross-origin)."
-	case "cookie-no-secure", "cookie-no-httponly", "cookie-no-samesite":
-		return "Set the Secure, HttpOnly and SameSite attributes on session cookies."
-	case "cors-wildcard", "cors-wildcard-credentials", "cors-origin-reflection", "cors-null-origin":
-		return "Restrict Access-Control-Allow-Origin to a trusted allowlist; never combine a reflected/wildcard origin with credentials."
-	case "server-version", "x-powered-by":
-		return "Remove or obfuscate version/technology headers."
-	case "mixed-content":
-		return "Serve all sub-resources over HTTPS."
-	case "cacheable-sensitive":
-		return "Add Cache-Control: no-store (and private) to authenticated responses."
-	case "exposed-secret":
-		return "Rotate the exposed credential immediately and remove secrets from responses/source."
-	case "jwt-alg-none", "jwt-observed":
-		return "Reject the \"none\" algorithm; verify signatures with a strong secret/key."
-	case "sqli-error", "sqli-time", "sqli-boolean":
-		return "Use parameterized queries / prepared statements; never concatenate input into SQL."
-	case "reflected-xss":
-		return "Context-encode output and apply a strict Content-Security-Policy."
-	case "ssti":
-		return "Never pass user input into template engines; use a sandbox or logic-less templates."
-	case "path-traversal":
-		return "Canonicalize and validate file paths against an allowlist; avoid user-controlled paths."
-	case "cmdi":
-		return "Avoid shelling out with user input; use safe APIs and strict allowlists."
-	case "open-redirect":
-		return "Validate redirect targets against an allowlist of internal URLs."
-	case "blind-ssrf", "ssrf":
-		return "Validate and allowlist outbound request destinations; block internal ranges, file:// and metadata endpoints."
-	case "xxe":
-		return "Disable external entity and DTD processing in the XML parser."
-	case "proto-pollution":
-		return "Avoid recursive merges of user input; reject __proto__/constructor keys and use null-prototype objects or Map."
-	case "broken-access-control":
-		return "Enforce server-side authorization on every request; verify the user owns/ may access the object (prevent IDOR)."
-	case "nosqli":
-		return "Validate/parse input types; use the driver's query builder with typed parameters, never raw operators from user input."
-	case "ldapi":
-		return "Escape LDAP filter metacharacters and use parameterized directory queries."
-	case "crlf":
-		return "Reject CR/LF in values used to build headers; use the framework's header API which encodes them."
-	case "graphql-introspection":
-		return "Disable schema introspection in production and apply per-field authorization and query depth/complexity limits."
-	case "graphql-endpoint", "tech-fingerprint":
-		return "Informational — review exposure and apply the relevant hardening for the identified surface/stack."
-	case "insecure-deser":
-		return "Never deserialize untrusted input; use data-only formats (JSON) and signed/allowlisted deserialization."
-	case "host-header-injection":
-		return "Validate the Host header against an allowlist; build absolute URLs from configuration, not the request Host."
-	case "cache-poisoning":
-		return "Add all response-affecting headers to the cache key, or stop reflecting unkeyed headers like X-Forwarded-Host."
-	default:
-		return "Review and remediate according to secure-coding guidance."
-	}
-}
-
 // buildSARIF renders findings as a SARIF 2.1.0 log for CI / code-scanning.
 func buildSARIF(findings []scanner.Finding) map[string]any {
 	sarifLevel := func(sev string) string {
