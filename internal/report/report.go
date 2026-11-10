@@ -123,7 +123,7 @@ func (r Report) PDF() ([]byte, error) {
 		pdf.SetFont("Helvetica", "", 10)
 		section(pdf, "CVSS v3.1", m.CVSSText())
 		section(pdf, "Affected URL", nz(f.URL, f.Host))
-		section(pdf, "Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail))
+		section(pdf, "Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail, f.Evidence))
 		if f.Evidence != "" {
 			pdf.SetFont("Helvetica", "B", 10)
 			pdf.Cell(0, 5, "Evidence")
@@ -278,7 +278,7 @@ func (r Report) XLSX() ([]byte, error) {
 			cvss = fmt.Sprintf("%.1f (%s)", m.CVSS, m.CVSSRating())
 			vector = "CVSS:3.1/" + m.CVSSVector
 		}
-		vals := []any{i + 1, fn.Severity, cvss, vector, fn.Title, nz(fn.URL, fn.Host), m.ObservationText(nz(fn.URL, fn.Host), fn.Detail),
+		vals := []any{i + 1, fn.Severity, cvss, vector, fn.Title, nz(fn.URL, fn.Host), m.ObservationText(nz(fn.URL, fn.Host), fn.Detail, fn.Evidence),
 			m.Impact, m.Remediation, m.CWE, m.Reference(), fn.Evidence, fn.Note}
 		for ci, v := range vals {
 			col := string(rune('A' + ci))
@@ -351,7 +351,7 @@ func (r Report) DOCX() ([]byte, error) {
 		para(fmt.Sprintf("%d. [%s] %s", i+1, strings.ToUpper(f.Severity), f.Title), "", true, 14)
 		labeled("CVSS v3.1", m.CVSSText())
 		labeled("Affected URL", nz(f.URL, f.Host))
-		labeled("Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail))
+		labeled("Observation", m.ObservationText(nz(f.URL, f.Host), f.Detail, f.Evidence))
 		if f.Evidence != "" {
 			labeled("Evidence", f.Evidence)
 		}

@@ -1998,7 +1998,7 @@ REASON: <one sentence>`,
 			if urlOrHost == "" {
 				urlOrHost = f.Host
 			}
-			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.CVSSText(), m.CVSSRating(), m.ObservationText(urlOrHost, f.Detail), m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
+			byHost[f.Host] = append(byHost[f.Host], repFinding{f, m.CVSSText(), m.CVSSRating(), m.ObservationText(urlOrHost, f.Detail, f.Evidence), m.Impact, m.Remediation, m.Reference(), m.CWEURL()})
 		}
 		var groups []hostGroup
 		for _, h := range order {

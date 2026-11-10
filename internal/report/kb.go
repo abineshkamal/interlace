@@ -2,8 +2,28 @@ package report
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var evidenceParamRe = regexp.MustCompile(`param "([^"]+)" \(([^)]+)\)`)
+
+// paramPhrase turns scanner evidence like `param "q" (query)` into a readable
+// clause such as `the "q" query-string parameter`, or "" if none is present.
+func paramPhrase(evidence string) string {
+	m := evidenceParamRe.FindStringSubmatch(evidence)
+	if m == nil {
+		return ""
+	}
+	loc := map[string]string{
+		"query": "query-string", "body": "request-body", "cookie": "cookie",
+		"header": "header", "json": "JSON-body", "path": "URL-path",
+	}[m[2]]
+	if loc == "" {
+		loc = m[2]
+	}
+	return fmt.Sprintf("the “%s” %s parameter", m[1], loc)
+}
 
 // Meta is the remediation knowledge for a finding type: what it means for the
 // business, how to fix it, standard references (CWE / OWASP Top 10), and a
@@ -20,23 +40,24 @@ type Meta struct {
 }
 
 // ObservationText composes a professional observation sentence for a report,
-// weaving in the affected URL and the scanner's specific detail.
-func (m Meta) ObservationText(url, detail string) string {
+// weaving in the affected URL and, where the evidence identifies it, the
+// specific parameter (e.g. the "q" query-string parameter).
+func (m Meta) ObservationText(url, detail, evidence string) string {
 	lead := "It was observed that the application"
 	if url != "" {
 		lead += " at " + url
 	}
 	if m.Observation != "" {
-		s := lead + " " + m.Observation
-		if detail != "" && !strings.Contains(m.Observation, strings.TrimSuffix(detail, ".")) {
-			s += " " + strings.TrimSpace(detail)
+		obs := m.Observation
+		if pp := paramPhrase(evidence); pp != "" {
+			obs = strings.Replace(obs, "the affected parameter", pp, 1)
 		}
-		return s
+		return lead + " " + obs
 	}
 	if detail != "" {
 		return lead + " is affected by this issue: " + strings.TrimSpace(detail)
 	}
-	return lead + " is affected by " + "this issue."
+	return lead + " is affected by this issue."
 }
 
 // CVSSRating maps the base score to its qualitative severity band.
@@ -142,7 +163,7 @@ var kb = map[string]Meta{
 		Remediation: "It is recommended to validate all user input against a strict allow-list and to apply context-aware output encoding to every piece of user-controllable data rendered in a response (HTML, attribute, JavaScript and URL contexts). In addition, deploy a strong Content-Security-Policy header with restrictive directives (for example, default-src 'self'; script-src 'self'; object-src 'none') to limit script execution, and set the HttpOnly, Secure and SameSite attributes on session cookies to reduce the impact of any residual cross-site scripting.",
 		CWE:         "CWE-79", CWEName: "Cross-site Scripting", OWASP: "A03:2021 – Injection",
 	},
-	"sqli-error":   sqli, "sqli-time": sqli, "sqli-boolean": sqli,
+	"sqli-error": sqli, "sqli-time": sqli, "sqli-boolean": sqli,
 	"ssti": {
 		Observation: "evaluates user-supplied input within a server-side template engine. A template expression injected in the affected parameter was evaluated by the server, confirming a Server-Side Template Injection vulnerability that commonly leads to remote code execution.",
 		Impact:      "Server-side template injection commonly escalates to remote code execution on the application server, exposing data and the host.",
